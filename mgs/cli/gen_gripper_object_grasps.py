@@ -64,10 +64,11 @@ def _fmt_eta(seconds: float) -> str:
 )
 def main(cfg: DictConfig):
     # --- select object ---
-    object_id_file = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects.txt")
-    with open(object_id_file, "r") as file:
-        all_object_ids = file.read().splitlines()
-    object_id = all_object_ids[int(cfg.object_id)]
+    #object_id_file = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects.txt")
+    #with open(object_id_file, "r") as file:
+    #    all_object_ids = file.read().splitlines()
+    #object_id = all_object_ids[int(cfg.object_id)]
+    object_id = cfg.object_id
 
     # --- components ---
     obj = get_object(object_id)

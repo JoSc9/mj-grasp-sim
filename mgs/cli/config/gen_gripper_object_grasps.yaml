@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - gripper: allegro_static
+  - gripper: panda
 
 max_rounds: 100
 
@@ -17,10 +17,10 @@ collect_grasps_till_eval: 100
 collect_grasps_till_save: 100
 
 # object id name
-object_id: 0
+object_id: HeavyDuty_Flashlight
 
 # force per impulse
-force: 100.0
+force: 200.0
 
 hydra:
   job:

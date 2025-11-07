@@ -126,3 +126,15 @@ class SE3Pose:
         quat = quat_xyzw_to_wxyz(scipy_quat)
         pos = np.random.randn(num, 3)
         return cls(pos, quat, "wxyz")
+    
+    @classmethod
+    def randn_se3_perturb(cls, num, sigma_rot=0.05, sigma_trans=0.01) -> Self:
+
+        w = sigma_rot * np.random.rand(num, 3)
+
+        quat = R.from_rotvec(w).as_quat()
+        quat = quat_xyzw_to_wxyz(quat)
+
+        pos = sigma_trans * np.random.randn(num, 3)
+        return cls(pos, quat, "wxyz")
+

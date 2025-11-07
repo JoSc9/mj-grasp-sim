@@ -308,9 +308,11 @@ def filter_grasps(cfg: DictConfig, scene_def):
         stable_grasp_mask = env.grasp_stable_mask(
             SE3Pose.from_mat(deepcopy(collision_free_poses), type="wxyz"),
             deepcopy(collision_free_joints),
+            collision_free_obj_indices,
             deepcopy(scene_def["env_state"]["state"]),
             enough_stable=cfg.enough_stable,
         )
+
         if sum(stable_grasp_mask) < cfg.min_stable:
             raise ValueError(
                 f"Not enough stable grasps! Only: {sum(stable_grasp_mask)}"
@@ -319,6 +321,32 @@ def filter_grasps(cfg: DictConfig, scene_def):
         result_poses = collision_free_poses[stable_grasp_mask]
         result_joints = collision_free_joints[stable_grasp_mask]
         result_obj_indices = collision_free_obj_indices[stable_grasp_mask]
+
+        if stable_grasp_mask.shape[0] >= cfg.enough_stable:
+            stable_grasp_mask[cfg.enough_stable:] = True
+
+        if cfg.with_failed_grasps:
+            failed_poses = collision_free_poses[~stable_grasp_mask]
+            failed_joints = collision_free_joints[~stable_grasp_mask]
+            failed_obj_indices = collision_free_obj_indices[~stable_grasp_mask]
+
+            if failed_poses.shape[0] < cfg.enough_failed:
+                failed_poses_extra, failed_joints_extra, failed_ids_extra = env.gen_failed_grasps(
+                    SE3Pose.from_mat(deepcopy(result_poses), type="wxyz"),
+                    deepcopy(result_joints),
+                    result_obj_indices,
+                    deepcopy(scene_def["env_state"]["state"]),
+                    enough_failed=cfg.enough_failed,
+            )
+                failed_poses = np.concat((failed_poses, failed_poses_extra), axis=0)
+                failed_joints = np.concat((failed_joints, failed_joints_extra), axis=0)
+                failed_obj_indices = np.concat((failed_obj_indices, failed_ids_extra))
+
+            if failed_poses.shape[0] < cfg.min_failed:
+                raise ValueError(
+                    f"Not enough failed grasps! Only: {failed_poses.shape[0]}"
+                )
+
     else:
         result_poses = collision_free_poses
         result_joints = collision_free_joints
@@ -326,6 +354,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
 
     result = []
     neg_result = []
+    failed_result = []
     for obj_idx in np.unique(result_obj_indices):
         mask = result_obj_indices == obj_idx
         if sum(mask) == 0:
@@ -350,7 +379,19 @@ def filter_grasps(cfg: DictConfig, scene_def):
                         "joints": collision_joints[collision_mask],
                     }
                 )
-    return result, neg_result
+        if cfg.with_failed_grasps:
+            failed_mask = failed_obj_indices == obj_idx
+            if failed_poses.shape[0] > 0:
+                failed_result.append(
+                    {
+                        "object_id": obj_id,
+                        "object_name": obj_name,
+                        "pose": failed_poses[failed_mask],
+                        "joints": failed_joints[failed_mask],
+                    }
+                )
+
+    return result, neg_result, failed_result
 
 
 @hydra.main(config_path="config", config_name="gen_scene")
@@ -368,7 +409,7 @@ def main(cfg: DictConfig):
 
     try:
         scene_dict = gen_stable_scene(cfg)
-        valid_grasps, invalid_grasps = filter_grasps(cfg, scene_dict)
+        valid_grasps, invalid_grasps, failed_grasps = filter_grasps(cfg, scene_dict)
         scene_path = os.path.join(output_dir, "scene")
         os.makedirs(output_dir, exist_ok=True)
         np.savez(
@@ -391,6 +432,18 @@ def main(cfg: DictConfig):
             obj_id, obj_name = grasps["object_id"], grasps["object_name"]
             object_path = os.path.join(
                 output_dir, obj_id + "_" + obj_name + "_" + "collision"
+            )
+            np.savez(
+                object_path,
+                **{
+                    "pose": grasps["pose"],
+                    "joints": grasps["joints"],
+                },
+            )
+        for grasps in failed_grasps:
+            obj_id, obj_name = grasps["object_id"], grasps["object_name"]
+            object_path = os.path.join(
+                output_dir, obj_id + "_" + obj_name + "_" + "failed"
             )
             np.savez(
                 object_path,

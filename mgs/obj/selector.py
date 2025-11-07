@@ -180,6 +180,48 @@ def get_objects(cfg: DictConfig) -> List[CollisionMeshObject]:
                         name=hash_name,
                     )
                 )
+    elif cfg.name == "ObjectList":
+        import random
+
+        ycb_obj_ids = [("ycb", o) for o in ObjectYCB.all_object_ids() if o in cfg.ids]
+        gso_obj_ids = [("gso", o) for o in ObjectGSO.all_object_ids() if o in cfg.ids]
+
+        obj_ids = ycb_obj_ids + gso_obj_ids
+
+        x, y = -8.5, -8
+        for i, tagged_obj in enumerate(obj_ids):
+            tag, obj = tagged_obj
+            hash_name = generate_unique_hash()
+
+            if i % 10 == 0:
+                x += 0.5
+                y = -8
+            else:
+                y += 0.5
+            if tag == "ycb":
+                object_list.append(
+                    ObjectYCB(
+                        SE3Pose(
+                            np.array([float(x), float(y), 0]),
+                            np.array([1, 0, 0, 0]),
+                            type="wxyz",
+                        ),
+                        object_id=obj,
+                        name=hash_name,
+                    )
+                )
+            elif tag == "gso":
+                object_list.append(
+                    ObjectGSO(
+                        SE3Pose(
+                            np.array([float(x), float(y), 0]),
+                            np.array([1, 0, 0, 0]),
+                            type="wxyz",
+                        ),
+                        object_id=obj,
+                        name=hash_name,
+                    )
+                )
     elif cfg.name == "Cube":
         hash_name = generate_unique_hash()
         object_list.append(

@@ -21,7 +21,7 @@ from mgs.env.clutter_table import ClutterTableEnv
 
 def get_env(cfg: DictConfig, gripper, obj_list):
     if cfg.name == "ClutterTable":
-        env = ClutterTableEnv(gripper, objects=obj_list)
+        env = ClutterTableEnv(gripper, objects=obj_list, headless=True)
     else:
         raise ValueError(f"Unknown environment {cfg.name}")
     return env
@@ -29,7 +29,7 @@ def get_env(cfg: DictConfig, gripper, obj_list):
 
 def get_env_from_dict(cfg: DictConfig, scene_dict):
     if cfg.name == "ClutterTable":
-        env = ClutterTableEnv.from_dict(scene_dict)
+        env = ClutterTableEnv.from_dict(scene_dict, headless=True)
     else:
         raise ValueError(f"Unknown environment {cfg.name}")
     return env

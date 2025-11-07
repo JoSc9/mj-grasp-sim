@@ -31,6 +31,7 @@ from mgs.util.geo.convert import quat_xyzw_to_wxyz
 from mgs.util.geo.transforms import SE3Pose
 
 
+
 class ClutterTableState(TypedDict):
     geom_conaffinity: np.ndarray
     geom_contype: np.ndarray
@@ -85,6 +86,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         self,
         gripper: MjShakableOpenCloseGripper,
         objects: List[CollisionMeshObject],
+        headless=True,
         scene_randomization=True,
     ):
         self.gripper = gripper
@@ -135,6 +137,11 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         self.data = mujoco.MjData(self.model)  # type: ignore
         mujoco.mj_forward(self.model, self.data)  # type: ignore
 
+        self.viewer = None
+        if not headless:
+            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            print(f"[INFO]: Viewer launched")
+
         self.next_x, self.next_y, self.counter = -5.5, -5.0, 0
         super().__init__("camera", 480, 480)
 
@@ -156,7 +163,10 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         mujoco.mj_forward(self.model, self.data)  # type: ignore
 
     def settle(self):
-        mujoco.mj_step(self.model, self.data, 10000)  # type: ignore
+        mujoco.mj_step(self.model, self.data, 10000) # type: ignore
+        if self.viewer:
+            if self.viewer.is_running():
+                self.viewer.sync() 
 
     def is_stable(self):
         stats = {}
@@ -176,6 +186,9 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 start_poses.append(start_pos)
 
             mujoco.mj_step(self.model, self.data, 100)  # type: ignore
+            if self.viewer:
+                if self.viewer.is_running():
+                    self.viewer.sync()
 
             for obj, start_pos in zip(self.objects, start_poses):
                 obj_id = mujoco.mj_name2id(  # type: ignore
@@ -217,10 +230,16 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 np.clip(self.data.qacc, -50.0, 50.0, out=self.data.qacc)
                 np.clip(self.data.qvel, -50.0, 50.0, out=self.data.qvel)
                 mujoco.mj_step(self.model, self.data)  # type: ignore
+                if self.viewer:
+                    if self.viewer.is_running():
+                        self.viewer.sync()
         for _ in range(5000):
             np.clip(self.data.qacc, -1.0, 1.0, out=self.data.qacc)
             np.clip(self.data.qvel, -50.0, 50.0, out=self.data.qvel)
             mujoco.mj_step(self.model, self.data)  # type: ignore
+            if self.viewer:
+                if self.viewer.is_running():
+                    self.viewer.sync()
 
     def update_camera_settings(self, num_images, i):
         rnd_pos = fibonacci_sphere(total_num=num_images, i=i) * 0.75
@@ -269,11 +288,51 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             ):
                 return 1.0
         return 0.0
+    
+    def find_named_parent_for_geom(self, geom_idx):
+        # try geom name first
+        geom_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_idx)
+        if geom_name:
+            return ("geom", geom_name)
 
+        # fallback: geom -> body -> walk up body parent chain
+        body_id = int(self.model.geom_bodyid[geom_idx])
+        while body_id != -1 and body_id is not None:
+            body_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+            if body_name:
+                return body_name
+            # walk to parent body
+            body_id = int(self.model.body_parentid[body_id])
+
+        return None
+    
+    def collision_obj_id(self):
+        # geom ids to objects
+        id_names = []
+        for i in range(self.model.ngeom):
+            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, i)
+            if name is None:
+                name = self.find_named_parent_for_geom(i)
+            if "hand" in name or "finger" in name or "col" in name:
+                name = "gripper"
+            id_names.append(name)
+        
+        collision_obj = []
+        for contact_pairs in self.data.contact.geom:
+            if (id_names[contact_pairs[0]] == "gripper" and id_names[contact_pairs[1]] in self.object_names):
+                    if id_names[contact_pairs[1]] not in collision_obj:
+                        collision_obj.append(id_names[contact_pairs[1]])
+            elif (id_names[contact_pairs[1]] == "gripper" and id_names[contact_pairs[0]] in self.object_names):
+                    if id_names[contact_pairs[0]] not in collision_obj:
+                        collision_obj.append(id_names[contact_pairs[0]])
+        return collision_obj
+
+    
     def grasp_stable_mask(
         self,
         poses: SE3Pose,
         joints: np.ndarray,
+        ids: np.ndarray,
         env_state,
         nstep_lift: int = 3000,  # Steps for lifting simulation
         lift_dist: float = 0.3,  # Distance to lift
@@ -353,12 +412,20 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                     start_pos_lift[2] + (lift_target_z - start_pos_lift[2]) * alpha
                 )
                 mujoco.mj_step(self.model, self.data)
+                if self.viewer:
+                    if self.viewer.is_running():
+                        self.viewer.sync()
 
                 # every 100 steps, verify contact
                 if (t + 1) % 100 == 0 and not self.check_gripper_contact():
                     lift_passed = False
                     contact_loss_failures += 1
                     break
+            if lift_passed:
+                obj_id = self.collision_obj_id()
+                if len(obj_id) != 1 or self.object_names[ids[i]] not in obj_id:
+                    lift_passed = False
+
 
             results.append(lift_passed)
             count_stable += int(lift_passed)
@@ -386,6 +453,106 @@ class ClutterTableEnv(MjScanEnv, Loadable):
 
         stable_grasp_masks = np.array(results, dtype=bool)
         return stable_grasp_masks
+    
+    def gen_failed_grasps(
+        self,
+        poses: SE3Pose,
+        joints: np.ndarray,
+        ids: np.ndarray,
+        env_state,
+        nstep_lift: int = 3000,  # Steps for lifting simulation
+        lift_dist: float = 0.3,  # Distance to lift
+        enough_failed=None,
+        show_progress: bool = True,
+        progress_desc: str | None = None,
+    ):
+        """
+        Evaluate grasp stability with a live tqdm progress bar.
+        Shows running success rate, success/fail counts, evaluated count, and skips (if enough_stable triggers).
+
+        If tqdm is not installed/available, progress is silently disabled.
+        """
+
+        failed_poses: List[SE3Pose] = []
+        failed_joints = []
+        failed_ids = []
+
+        num_grasps = len(poses)
+        gripper_joint_idxs = self.get_joint_idxs(
+            self.gripper.get_actuator_joint_names()
+        )
+
+        count_failed = 0  # number of successful grasps
+        eval_count = 0
+        contact_loss_failures = 0
+
+        max_iterations = 20
+
+        if enough_failed is None:
+            enough_failed = 0
+
+        for _ in range(max_iterations):
+            if count_failed >= enough_failed:
+                break
+
+            delta_poses: SE3Pose = SE3Pose.randn_se3_perturb(num_grasps, sigma_rot=0.1, sigma_trans=0.02)
+            new_poses = poses.__matmul__(delta_poses)
+
+            for i in range(num_grasps):
+                lift_failed = False
+
+                # restore environment state for each evaluation
+                spec = mujoco.mjtState.mjSTATE_INTEGRATION
+                mujoco.mj_setState(self.model, self.data, env_state, spec)
+
+                b2c = self.gripper.base_to_contact_transform()
+                pose_processed = new_poses[i] @ b2c
+                self.set_qpos(joints[i], gripper_joint_idxs)
+                self.gripper.set_pose(self, pose_processed)
+
+                # Update geom positions, then close
+                mujoco.mj_forward(self.model, self.data)
+                self.gripper.close_gripper_at(self, pose_processed)
+
+                # --- Lift test ---
+                eval_count += 1
+                start_pos_lift = np.copy(self.data.mocap_pos[0, :])
+                lift_target_z = start_pos_lift[2] + lift_dist
+                for t in range(nstep_lift):
+                    alpha = t / nstep_lift
+                    self.data.mocap_pos[0, 2] = (
+                        start_pos_lift[2] + (lift_target_z - start_pos_lift[2]) * alpha
+                    )
+                    mujoco.mj_step(self.model, self.data)
+                    if self.viewer:
+                        if self.viewer.is_running():
+                            self.viewer.sync()
+
+                    # every 100 steps, verify contact
+                    if (t + 1) % 100 == 0 and not self.check_gripper_contact():
+                        lift_failed = True
+                        contact_loss_failures += 1
+                        break
+                if not lift_failed:
+                    obj_id = self.collision_obj_id()
+                    if len(obj_id) != 1:
+                        lift_failed = True
+                    elif self.object_names[ids[i]] not in obj_id:
+                        lift_failed = True
+
+                if lift_failed:
+                    failed_poses.append(new_poses[i])
+                    failed_joints.append(joints[i])
+                    failed_ids.append(ids[i])
+
+                    count_failed += 1
+
+        failed_poses = [pose.to_mat()[None] for pose in failed_poses]
+        failed_poses = np.vstack(failed_poses)
+        failed_joints = np.vstack(failed_joints)
+        failed_ids = np.vstack(failed_ids).flatten()
+        
+        return failed_poses, failed_joints, failed_ids
 
     def get_obj_pose(self, object_name: str):
         mujoco.mj_forward(self.model, self.data)  # type: ignore
@@ -499,13 +666,13 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         return dict
 
     @classmethod
-    def from_dict(cls, state_dict):
+    def from_dict(cls, state_dict, headless=True):
         gripper, obj_list, state = (
             state_dict["gripper"],
             state_dict["objects"],
             state_dict["env_state"],
         )
-        env = ClutterTableEnv(gripper, obj_list, scene_randomization=False)
+        env = ClutterTableEnv(gripper, obj_list, scene_randomization=False, headless=headless)
         env.set_state(state["state"])
 
         env.model.geom_conaffinity[:] = state["geom_conaffinity"]
