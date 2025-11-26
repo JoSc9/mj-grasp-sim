@@ -29,7 +29,7 @@ def get_env(cfg: DictConfig, gripper, obj_list):
 
 def get_env_from_dict(cfg: DictConfig, scene_dict):
     if cfg.name == "ClutterTable":
-        env = ClutterTableEnv.from_dict(scene_dict, headless=True)
+        env = ClutterTableEnv.from_dict(scene_dict, headless=False)
     else:
         raise ValueError(f"Unknown environment {cfg.name}")
     return env

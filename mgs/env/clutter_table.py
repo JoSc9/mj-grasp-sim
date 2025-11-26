@@ -454,6 +454,239 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         stable_grasp_masks = np.array(results, dtype=bool)
         return stable_grasp_masks
     
+
+    def grasp_wrench_stable_mask(
+        self,
+        poses: SE3Pose,
+        joints: np.ndarray,
+        ids: np.ndarray,
+        env_state,
+        nstep_lift: int = 3000,  # Steps for lifting simulation
+        lift_dist: float = 0.3,  # Distance to lift
+        ext_force_max = 3.,
+        ext_torque_max = 0.5,
+        enough_stable=None,
+        show_progress: bool = True,
+        progress_desc: str | None = None,
+    ):
+        """
+        Evaluate grasp stability with a live tqdm progress bar.
+        Shows running success rate, success/fail counts, evaluated count, and skips (if enough_stable triggers).
+
+        If tqdm is not installed/available, progress is silently disabled.
+        """
+        # lazy import tqdm; fall back gracefully
+        pbar = None
+        if show_progress:
+            try:
+                from tqdm.auto import tqdm  # type: ignore
+
+                pbar = tqdm(
+                    total=len(poses),
+                    desc=progress_desc or "Evaluating grasps",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+            except Exception:
+                pbar = None  # disable progress if tqdm missing or no TTY
+
+        results: List[bool] = []
+        num_grasps = len(poses)
+        gripper_joint_idxs = self.get_joint_idxs(
+            self.gripper.get_actuator_joint_names()
+        )
+
+        count_stable = 0  # number of successful grasps
+        eval_count = 0  # number of grasps actually simulated (excludes 'skipped' due to enough_stable)
+        skipped_count = 0  # how many we skipped after hitting enough_stable
+        contact_loss_failures = 0  # failures during lift due to contact loss
+
+        for i in range(num_grasps):
+            lift_passed = True
+
+            # early stopping: we still append False to keep mask length, but don't simulate
+            if enough_stable is not None and count_stable >= enough_stable:
+                results.append(False)
+                skipped_count += 1
+                # progress update
+                if pbar is not None:
+                    sr = (count_stable / eval_count) if eval_count > 0 else 0.0
+                    pbar.update(1)
+                    pbar.set_postfix_str(
+                        f"succ={count_stable} fail={eval_count - count_stable} "
+                        f"skipped={skipped_count} SR={sr*100:.1f}%"
+                    )
+                continue
+
+            # restore environment state for each evaluation
+            spec = mujoco.mjtState.mjSTATE_INTEGRATION
+            mujoco.mj_setState(self.model, self.data, env_state, spec)
+
+            b2c = self.gripper.base_to_contact_transform()
+            pose_processed = poses[i] @ b2c
+            self.set_qpos(joints[i], gripper_joint_idxs)
+            self.gripper.set_pose(self, pose_processed)
+
+            # Update geom positions, then close
+            mujoco.mj_forward(self.model, self.data)
+            self.gripper.close_gripper_at(self, pose_processed)
+
+            # --- Lift test ---
+            eval_count += 1
+            start_pos_lift = np.copy(self.data.mocap_pos[0, :])
+            lift_target_z = start_pos_lift[2] + lift_dist
+            for t in range(nstep_lift):
+                alpha = t / nstep_lift
+                self.data.mocap_pos[0, 2] = (
+                    start_pos_lift[2] + (lift_target_z - start_pos_lift[2]) * alpha
+                )
+                mujoco.mj_step(self.model, self.data)
+                if self.viewer:
+                    if self.viewer.is_running():
+                        self.viewer.sync()
+
+                # every 100 steps, verify contact
+                if (t + 1) % 100 == 0 and not self.check_gripper_contact():
+                    lift_passed = False
+                    contact_loss_failures += 1
+                    break
+            if lift_passed:
+                obj_id = self.collision_obj_id()
+                if len(obj_id) != 1 or self.object_names[ids[i]] not in obj_id:
+                    lift_passed = False
+
+                # apply external wrench and check stability
+                # get approach vector from pose
+                pose_mat = poses[i].to_mat()
+                approach_vector = pose_mat[:3, :3] @ np.array([0, 0, -1])  # z-axis in gripper frame   
+                approach_vector /= np.linalg.norm(approach_vector)
+
+                # get wrench on object in approach direction
+                ext_force = np.arange(0.1, ext_force_max + 0.1, 0.1)
+
+                # apply force on object in approach direction
+                for f in ext_force:
+                    force_vector = f * approach_vector
+                    mujoco.mj_applyFT(  # type: ignore
+                        self.model,
+                        self.data,
+                        force_vector,
+                        np.array([0.0, 0.0, 0.0]),
+                        mujoco.mj_name2id(  # type: ignore
+                            self.model,
+                            self.object_names[ids[i]] + ":body",
+                            mujoco.mjtObj.mjOBJ_BODY,  # type: ignore
+                        ),
+                    )
+
+                    # simulate for a short duration to see if grasp holds
+                    perturb_step = 0
+                    while perturb_step < 100:
+                        mujoco.mj_step(self.model, self.data)
+                        if self.viewer:
+                            if self.viewer.is_running():
+                                self.viewer.sync()
+                        perturb_step += 1
+
+                        # check if object is still in contact with gripper
+                        if not self.check_gripper_contact():
+                            lift_passed = False
+                            break
+
+                
+                perturb_step = 0
+
+
+            results.append(lift_passed)
+            count_stable += int(lift_passed)
+
+            # progress update
+            if pbar is not None:
+                sr = (count_stable / eval_count) if eval_count > 0 else 0.0
+                pbar.update(1)
+                pbar.set_postfix_str(
+                    f"succ={count_stable} fail={eval_count - count_stable} "
+                    f"skipped={skipped_count} SR={sr*100:.1f}%"
+                )
+
+        if pbar is not None:
+            # final line with totals; leave the bar collapsed
+            sr = (count_stable / eval_count) if eval_count > 0 else 0.0
+            pbar.clear()
+            pbar.close()
+            # optional: final one-liner print
+            print(
+                f"[grasp_stable_mask] evaluated={eval_count}, succ={count_stable}, "
+                f"fail={eval_count - count_stable}, skipped={skipped_count}, "
+                f"contact_fail={contact_loss_failures}, SR={sr*100:.1f}%"
+            )
+
+        stable_grasp_masks = np.array(results, dtype=bool)
+        return stable_grasp_masks
+    
+    def gen_success_labels(
+        self,
+        poses: SE3Pose,
+        joints: np.ndarray,
+        ids: np.ndarray,
+        env_state,
+        nstep_lift: int = 3000,  # Steps for lifting simulation
+        lift_dist: float = 0.3,  # Distance to lift
+        force_min = 2.1,
+        force_max = 5.0,
+        enough_stable=None,
+        enough_unstable=None):
+
+        if force_min > force_max:
+            raise ValueError("force_min must be less or equal to force_max!")
+
+        force_list = np.arange(force_min, force_max + 0.2, 0.2)
+        success_labels = np.zeros(len(poses), dtype=float)
+        stable_grasp_mask = np.zeros(len(poses), dtype=bool)
+
+        num_stable = 0
+        num_unstable = 0
+
+        for i in range(len(poses)):
+
+            # binary search to find lowest grasp force that results in stable grasp
+            lo, hi = 0, len(force_list) - 1
+            ans = -1
+
+            while lo <= hi:
+                mid = (lo + hi) // 2
+
+                # set panda gripper force to force_list[mid]
+                self.gripper.set_finger_max_force(sim=self, max_force=force_list[mid])
+                
+                stable_mask = self.grasp_stable_mask(
+                    poses[i][None],
+                    joints[i][None],
+                    ids[i][None],
+                    env_state
+                )
+        
+                if stable_mask[0]:
+                    ans = mid
+                    hi = mid - 1
+                else:
+                    lo = mid + 1
+            
+            # calculate success label from ans
+            success_label = (force_max - force_list[ans]) / (force_max - force_min)
+            success_labels[i] = success_label
+
+            if success_label >= 0.5:
+                num_stable += 1
+                stable_grasp_mask[i] = True
+            else:
+                num_unstable += 1
+            if enough_stable is not None and num_stable >= enough_stable:
+                #if enough_unstable is not None and num_unstable >= enough_unstable:
+                break
+        
+        return stable_grasp_mask, success_labels
+    
     def gen_failed_grasps(
         self,
         poses: SE3Pose,
@@ -476,6 +709,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         failed_poses: List[SE3Pose] = []
         failed_joints = []
         failed_ids = []
+        failed_labels = []
 
         num_grasps = len(poses)
         gripper_joint_idxs = self.get_joint_idxs(
@@ -491,68 +725,40 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         if enough_failed is None:
             enough_failed = 0
 
+        sigma_rot = 0.05
+        sigma_trans = 0.01
+
         for _ in range(max_iterations):
             if count_failed >= enough_failed:
                 break
 
-            delta_poses: SE3Pose = SE3Pose.randn_se3_perturb(num_grasps, sigma_rot=0.1, sigma_trans=0.02)
+            
+
+            delta_poses: SE3Pose = SE3Pose.randn_se3_perturb(num_grasps, sigma_rot=sigma_rot, sigma_trans=sigma_trans)
             new_poses = poses.__matmul__(delta_poses)
 
-            for i in range(num_grasps):
-                lift_failed = False
+            sigma_rot *= 1.2
+            sigma_trans +=0.02
 
-                # restore environment state for each evaluation
-                spec = mujoco.mjtState.mjSTATE_INTEGRATION
-                mujoco.mj_setState(self.model, self.data, env_state, spec)
+            stable_mask, success_labels = self.gen_success_labels(
+                new_poses,
+                joints,
+                ids,
+                env_state
+            )
 
-                b2c = self.gripper.base_to_contact_transform()
-                pose_processed = new_poses[i] @ b2c
-                self.set_qpos(joints[i], gripper_joint_idxs)
-                self.gripper.set_pose(self, pose_processed)
-
-                # Update geom positions, then close
-                mujoco.mj_forward(self.model, self.data)
-                self.gripper.close_gripper_at(self, pose_processed)
-
-                # --- Lift test ---
-                eval_count += 1
-                start_pos_lift = np.copy(self.data.mocap_pos[0, :])
-                lift_target_z = start_pos_lift[2] + lift_dist
-                for t in range(nstep_lift):
-                    alpha = t / nstep_lift
-                    self.data.mocap_pos[0, 2] = (
-                        start_pos_lift[2] + (lift_target_z - start_pos_lift[2]) * alpha
-                    )
-                    mujoco.mj_step(self.model, self.data)
-                    if self.viewer:
-                        if self.viewer.is_running():
-                            self.viewer.sync()
-
-                    # every 100 steps, verify contact
-                    if (t + 1) % 100 == 0 and not self.check_gripper_contact():
-                        lift_failed = True
-                        contact_loss_failures += 1
-                        break
-                if not lift_failed:
-                    obj_id = self.collision_obj_id()
-                    if len(obj_id) != 1:
-                        lift_failed = True
-                    elif self.object_names[ids[i]] not in obj_id:
-                        lift_failed = True
-
-                if lift_failed:
-                    failed_poses.append(new_poses[i])
-                    failed_joints.append(joints[i])
-                    failed_ids.append(ids[i])
-
-                    count_failed += 1
+            failed_poses.append(new_poses[~stable_mask])
+            failed_joints.append(joints[~stable_mask])
+            failed_ids.append(ids[~stable_mask])
+            failed_labels.append(success_labels[~stable_mask])
+            count_failed += sum(~stable_mask)
 
         failed_poses = [pose.to_mat()[None] for pose in failed_poses]
         failed_poses = np.vstack(failed_poses)
         failed_joints = np.vstack(failed_joints)
         failed_ids = np.vstack(failed_ids).flatten()
         
-        return failed_poses, failed_joints, failed_ids
+        return failed_poses, failed_joints, failed_ids, failed_labels
 
     def get_obj_pose(self, object_name: str):
         mujoco.mj_forward(self.model, self.data)  # type: ignore

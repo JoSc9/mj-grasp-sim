@@ -10,11 +10,11 @@ defaults:
 num_objects: 2
 only_collision_free: False
 save_collision_grasps: True
-with_failed_grasps: False
-min_stable: 500
-enough_stable: 1500
-min_failed: 500
-enough_failed: 1000
+with_failed_grasps: True
+min_stable: 5
+enough_stable: 5
+min_failed: 5
+enough_failed: 5
 
 hydra:
   job:

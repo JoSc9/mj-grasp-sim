@@ -239,6 +239,10 @@ class GripperPanda(MjShakableOpenCloseGripper, MjScannable):
         # Step the simulation to allow the controller to close the fingers
         # Keep existing step count
         mujoco.mj_step(sim.model, sim.data, nstep=1000)
+    
+    def set_finger_max_force(self, sim: MjSimulation, max_force: float):
+        """Sets the maximum force for the gripper finger actuators."""
+        sim.model.actuator_forcerange[:] = np.array([-max_force, max_force])
 
     def get_actuator_joint_names(self) -> List[str]:
         """Returns the names of the joints directly controlled by actuators."""

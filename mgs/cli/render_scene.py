@@ -24,55 +24,61 @@ def scan(cfg: DictConfig, scene_def):
 
 @hydra.main(config_path="config", config_name="render_scene")
 def main(cfg: DictConfig):
-    output_dir = os.getenv("MGS_OUTPUT_DIR")
-    input_dir = os.getenv("MGS_INPUT_DIR")
+    output_dir_all = os.getenv("MGS_OUTPUT_DIR")
+    input_dir_all = os.getenv("MGS_INPUT_DIR")
 
-    assert output_dir is not None
-    assert input_dir is not None
-    input_dir = os.path.join(input_dir, cfg.gripper.name)
-    scene_dir = [
-        d for d in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, d))
-    ][cfg.id]
-    input_dir = os.path.join(input_dir, scene_dir)
-    print("Scene dir: ", input_dir)
+    assert output_dir_all is not None
+    assert input_dir_all is not None
+    input_dir_all = os.path.join(input_dir_all, cfg.gripper.name)
+    scene_dir_list = [
+        d for d in os.listdir(input_dir_all) if os.path.isdir(os.path.join(input_dir_all, d))
+    ]
 
-    scene_path = os.path.join(input_dir, "scene.npz")
-    scene = np.load(scene_path, allow_pickle=True)
-    scene_dict = scene["scene_definition"].item()
-    images, extrinsics, intrinsics, image_masks = scan(
-        deepcopy(cfg), deepcopy(scene_dict)
-    )
-    pcd, feature = rgbd_to_pcd(images, intrinsics, extrinsics)
-    pcd = pcd[image_masks]
-    feature = feature[image_masks]
+    num  = len(scene_dir_list)
+    count = 1
+    for scene_dir in scene_dir_list:
 
-    region_mask = np.all(
-        (pcd < np.array([[0.225, 0.225, 1.0]]))
-        & (pcd > np.array([[-0.225, -0.225, -0.01]])),
-        axis=-1,
-    )
-    pcd = pcd[region_mask]
-    feature = feature[region_mask]
+        input_dir = os.path.join(input_dir_all, scene_dir)
+        print("Scene dir: ", input_dir)
 
-    pcd, feature = voxel_downsample_pcd(pcd, feature, voxel_size=0.002)
-    mask = detect_outlier(pcd, radius=0.008, min_neighbors=2)
-    pcd, feature = pcd[mask], feature[mask]
-    idx = farthest_point_sampling(
-        jnp.asarray(pcd, dtype=jnp.float32), num_samples=15000
-    )
-    pcd = pcd[idx]
-    feature = feature[idx]
+        scene_path = os.path.join(input_dir, "scene.npz")
+        scene = np.load(scene_path, allow_pickle=True)
+        scene_dict = scene["scene_definition"].item()
+        images, extrinsics, intrinsics, image_masks = scan(
+            deepcopy(cfg), deepcopy(scene_dict)
+        )
+        pcd, feature = rgbd_to_pcd(images, intrinsics, extrinsics)
+        pcd = pcd[image_masks]
+        feature = feature[image_masks]
 
-    output_dir = os.path.join(output_dir, cfg.gripper.name, scene_dir)
-    os.makedirs(output_dir, exist_ok=True)
-    np.savez(
-        os.path.join(output_dir, "scene_pcd"),
-        **{
-            "points": np.asarray(pcd, dtype=np.float32),
-            "colors": np.asarray(feature, dtype=np.float32),
-        },
-    )
-    print("Finished!")
+        region_mask = np.all(
+            (pcd < np.array([[0.225, 0.225, 1.0]]))
+            & (pcd > np.array([[-0.225, -0.225, -0.01]])),
+            axis=-1,
+        )
+        pcd = pcd[region_mask]
+        feature = feature[region_mask]
+
+        pcd, feature = voxel_downsample_pcd(pcd, feature, voxel_size=0.002)
+        mask = detect_outlier(pcd, radius=0.008, min_neighbors=2)
+        pcd, feature = pcd[mask], feature[mask]
+        idx = farthest_point_sampling(
+            jnp.asarray(pcd, dtype=jnp.float32), num_samples=15000
+        )
+        pcd = pcd[idx]
+        feature = feature[idx]
+
+        output_dir = os.path.join(output_dir_all, cfg.gripper.name, scene_dir)
+        os.makedirs(output_dir, exist_ok=True)
+        np.savez(
+            os.path.join(output_dir, "scene_pcd"),
+            **{
+                "points": np.asarray(pcd, dtype=np.float32),
+                "colors": np.asarray(feature, dtype=np.float32),
+            },
+        )
+        print(f"Finished with scene {count} of {num}!")
+        count += 1
 
 
 if __name__ == "__main__":

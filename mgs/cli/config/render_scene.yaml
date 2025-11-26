@@ -6,7 +6,7 @@ defaults:
   - env: clutter_table
   - gripper: panda
 
-num_images: 10
+num_images: 200
 id: 0
 
 hydra:

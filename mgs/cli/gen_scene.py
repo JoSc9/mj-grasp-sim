@@ -304,14 +304,23 @@ def filter_grasps(cfg: DictConfig, scene_def):
             raise ValueError(
                 f"Not enough collision free grasps! Only: {sum(collision_free_mask)}"
             )
-
-        stable_grasp_mask = env.grasp_stable_mask(
+        
+        stable_grasp_mask, success_labels = env.gen_success_labels(
             SE3Pose.from_mat(deepcopy(collision_free_poses), type="wxyz"),
             deepcopy(collision_free_joints),
             collision_free_obj_indices,
             deepcopy(scene_def["env_state"]["state"]),
             enough_stable=cfg.enough_stable,
         )
+
+        #stable_grasp_mask = env.grasp_stable_mask(
+        #    SE3Pose.from_mat(deepcopy(collision_free_poses), type="wxyz"),
+        #    deepcopy(collision_free_joints),
+        #    collision_free_obj_indices,
+        #    deepcopy(scene_def["env_state"]["state"]),
+        #    enough_stable=cfg.enough_stable,
+        #)
+
 
         if sum(stable_grasp_mask) < cfg.min_stable:
             raise ValueError(
@@ -321,6 +330,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
         result_poses = collision_free_poses[stable_grasp_mask]
         result_joints = collision_free_joints[stable_grasp_mask]
         result_obj_indices = collision_free_obj_indices[stable_grasp_mask]
+        result_success_labels = success_labels[stable_grasp_mask]
 
         if stable_grasp_mask.shape[0] >= cfg.enough_stable:
             stable_grasp_mask[cfg.enough_stable:] = True
@@ -329,9 +339,10 @@ def filter_grasps(cfg: DictConfig, scene_def):
             failed_poses = collision_free_poses[~stable_grasp_mask]
             failed_joints = collision_free_joints[~stable_grasp_mask]
             failed_obj_indices = collision_free_obj_indices[~stable_grasp_mask]
+            failed_success_labels = success_labels[~stable_grasp_mask]
 
             if failed_poses.shape[0] < cfg.enough_failed:
-                failed_poses_extra, failed_joints_extra, failed_ids_extra = env.gen_failed_grasps(
+                failed_poses_extra, failed_joints_extra, failed_ids_extra, failed_success_labels_extra = env.gen_failed_grasps(
                     SE3Pose.from_mat(deepcopy(result_poses), type="wxyz"),
                     deepcopy(result_joints),
                     result_obj_indices,
@@ -341,6 +352,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
                 failed_poses = np.concat((failed_poses, failed_poses_extra), axis=0)
                 failed_joints = np.concat((failed_joints, failed_joints_extra), axis=0)
                 failed_obj_indices = np.concat((failed_obj_indices, failed_ids_extra))
+                failed_success_labels = np.concat((failed_success_labels, failed_success_labels_extra))
 
             if failed_poses.shape[0] < cfg.min_failed:
                 raise ValueError(
