@@ -289,6 +289,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 return 1.0
         return 0.0
     
+
     def find_named_parent_for_geom(self, geom_idx):
         # try geom name first
         geom_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_idx)
@@ -306,7 +307,13 @@ class ClutterTableEnv(MjScanEnv, Loadable):
 
         return None
     
+
     def collision_obj_id(self):
+        """
+        As the geoms are ordered accordingly to the XML. We can simply
+        check for contacts between obj geoms and gripper geoms by ids
+        relative to the table (which is inbetween obj and gripper by construction)
+        """
         # geom ids to objects
         id_names = []
         for i in range(self.model.ngeom):
@@ -317,14 +324,18 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 name = "gripper"
             id_names.append(name)
         
-        collision_obj = []
+        collision_obj = {'id': [], 'name': []}
         for contact_pairs in self.data.contact.geom:
             if (id_names[contact_pairs[0]] == "gripper" and id_names[contact_pairs[1]] in self.object_names):
-                    if id_names[contact_pairs[1]] not in collision_obj:
-                        collision_obj.append(id_names[contact_pairs[1]])
+                    if id_names[contact_pairs[1]] not in collision_obj['id']:
+                        collision_obj['id'].append(id_names[contact_pairs[1]])
+                        idx = [i for i in range(len(self.object_names)) if self.object_names[i] == id_names[contact_pairs[1]]][0]
+                        collision_obj['name'].append(self.object_ids[idx])
             elif (id_names[contact_pairs[1]] == "gripper" and id_names[contact_pairs[0]] in self.object_names):
-                    if id_names[contact_pairs[0]] not in collision_obj:
-                        collision_obj.append(id_names[contact_pairs[0]])
+                    if id_names[contact_pairs[0]] not in collision_obj['id']:
+                        collision_obj['id'].append(id_names[contact_pairs[0]])
+                        idx = [i for i in range(len(self.object_names)) if self.object_names[i] == id_names[contact_pairs[1]]][0]
+                        collision_obj['name'].append(self.object_ids[idx])
         return collision_obj
 
     
@@ -339,6 +350,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         enough_stable=None,
         show_progress: bool = True,
         progress_desc: str | None = None,
+        inference=False,
     ):
         """
         Evaluate grasp stability with a live tqdm progress bar.
@@ -371,6 +383,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         eval_count = 0  # number of grasps actually simulated (excludes 'skipped' due to enough_stable)
         skipped_count = 0  # how many we skipped after hitting enough_stable
         contact_loss_failures = 0  # failures during lift due to contact loss
+        num_wrong_object = 0 # failures due to wrong object being grasped
 
         for i in range(num_grasps):
             lift_passed = True
@@ -394,12 +407,21 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             mujoco.mj_setState(self.model, self.data, env_state, spec)
 
             b2c = self.gripper.base_to_contact_transform()
-            pose_processed = poses[i] @ b2c
-            self.set_qpos(joints[i], gripper_joint_idxs)
-            self.gripper.set_pose(self, pose_processed)
+            if inference:
+                pose_processed = poses[i]
+                # open gripper
+                self.gripper.open_gripper(self)
+                self.gripper.set_pose(self, pose_processed)  
+            else:
+                pose_processed = poses[i] @ b2c
+                self.set_qpos(joints[i], gripper_joint_idxs)
+                self.gripper.set_pose(self, pose_processed)
 
             # Update geom positions, then close
             mujoco.mj_forward(self.model, self.data)
+            if self.viewer:
+                if self.viewer.is_running():
+                    self.viewer.sync()
             self.gripper.close_gripper_at(self, pose_processed)
 
             # --- Lift test ---
@@ -423,8 +445,17 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                     break
             if lift_passed:
                 obj_id = self.collision_obj_id()
-                if len(obj_id) != 1 or self.object_names[ids[i]] not in obj_id:
+                if len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
                     lift_passed = False
+                    num_wrong_object += 1
+                elif isinstance(ids[i], int):
+                    if self.object_names[ids[i]] not in obj_id['id']:
+                        lift_passed = False
+                        num_wrong_object += 1
+                elif isinstance(ids[i], str):
+                    if ids[i] not in obj_id["name"][0]:
+                        lift_passed = False
+                        num_wrong_object += 1
 
 
             results.append(lift_passed)
@@ -448,10 +479,13 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             print(
                 f"[grasp_stable_mask] evaluated={eval_count}, succ={count_stable}, "
                 f"fail={eval_count - count_stable}, skipped={skipped_count}, "
-                f"contact_fail={contact_loss_failures}, SR={sr*100:.1f}%"
+                f"contact_fail={contact_loss_failures}, wrong object grasped fail={num_wrong_object} SR={sr*100:.1f}%"
             )
 
         stable_grasp_masks = np.array(results, dtype=bool)
+        if inference:
+            return stable_grasp_masks, num_wrong_object
+
         return stable_grasp_masks
     
 
