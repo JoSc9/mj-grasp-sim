@@ -406,23 +406,25 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             spec = mujoco.mjtState.mjSTATE_INTEGRATION
             mujoco.mj_setState(self.model, self.data, env_state, spec)
 
-            b2c = self.gripper.base_to_contact_transform()
             if inference:
                 pose_processed = poses[i]
                 # open gripper
                 self.gripper.open_gripper(self)
+                #self.set_qpos(joints[i], gripper_joint_idxs)
                 self.gripper.set_pose(self, pose_processed)  
             else:
+                b2c = self.gripper.base_to_contact_transform()
                 pose_processed = poses[i] @ b2c
                 self.set_qpos(joints[i], gripper_joint_idxs)
                 self.gripper.set_pose(self, pose_processed)
 
             # Update geom positions, then close
             mujoco.mj_forward(self.model, self.data)
+            self.gripper.close_gripper_at(self, pose_processed)
+            
             if self.viewer:
                 if self.viewer.is_running():
                     self.viewer.sync()
-            self.gripper.close_gripper_at(self, pose_processed)
 
             # --- Lift test ---
             eval_count += 1
@@ -444,18 +446,20 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                     contact_loss_failures += 1
                     break
             if lift_passed:
-                obj_id = self.collision_obj_id()
-                if len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
-                    lift_passed = False
-                    num_wrong_object += 1
-                elif isinstance(ids[i], int):
-                    if self.object_names[ids[i]] not in obj_id['id']:
+                # check if correct object grasped
+                if ids is not None:
+                    obj_id = self.collision_obj_id()
+                    if len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
                         lift_passed = False
                         num_wrong_object += 1
-                elif isinstance(ids[i], str):
-                    if ids[i] not in obj_id["name"][0]:
-                        lift_passed = False
-                        num_wrong_object += 1
+                    elif isinstance(ids[i], int):
+                        if self.object_names[ids[i]] not in obj_id['id']:
+                            lift_passed = False
+                            num_wrong_object += 1
+                    elif isinstance(ids[i], str):
+                        if ids[i] not in obj_id["name"][0]:
+                            lift_passed = False
+                            num_wrong_object += 1
 
 
             results.append(lift_passed)

@@ -19,17 +19,17 @@ from omegaconf import DictConfig
 from mgs.env.clutter_table import ClutterTableEnv
 
 
-def get_env(cfg: DictConfig, gripper, obj_list):
+def get_env(cfg: DictConfig, gripper, obj_list, headless: bool=True):
     if cfg.name == "ClutterTable":
-        env = ClutterTableEnv(gripper, objects=obj_list, headless=True)
+        env = ClutterTableEnv(gripper, objects=obj_list, headless=headless)
     else:
         raise ValueError(f"Unknown environment {cfg.name}")
     return env
 
 
-def get_env_from_dict(cfg: DictConfig, scene_dict):
+def get_env_from_dict(cfg: DictConfig, scene_dict, headless: bool=True):
     if cfg.name == "ClutterTable":
-        env = ClutterTableEnv.from_dict(scene_dict, headless=False)
+        env = ClutterTableEnv.from_dict(scene_dict, headless=headless)
     else:
         raise ValueError(f"Unknown environment {cfg.name}")
     return env
