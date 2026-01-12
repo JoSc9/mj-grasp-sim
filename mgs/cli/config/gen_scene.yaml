@@ -11,11 +11,10 @@ num_objects: 2
 only_collision_free: False
 save_collision_grasps: True
 with_failed_grasps: True
-min_stable: 5
-enough_stable: 5
-min_failed: 5
-enough_failed: 5
-
+min_stable: 300
+enough_stable: 600
+min_failed: 300
+enough_failed: 600
 hydra:
   job:
     chdir: False

@@ -64,352 +64,354 @@ def _fmt_eta(seconds: float) -> str:
 )
 def main(cfg: DictConfig):
     # --- select object ---
-    #object_id_file = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects.txt")
-    #with open(object_id_file, "r") as file:
-    #    all_object_ids = file.read().splitlines()
-    #object_id = all_object_ids[int(cfg.object_id)]
-    object_id = cfg.object_id
+    object_id_file = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects.txt")
+    with open(object_id_file, "r") as file:
+        all_object_ids = file.read().splitlines()
+        
+        
+    #object_ids = all_object_ids[int(cfg.object_id)]
 
-    # --- components ---
-    obj = get_object(object_id)
-    assert cfg.gripper.grasp_sampler in [
-        "Antipodal",
-        "ContactGradient",
-    ], "Unsupported sampler"
-    sampler = (
-        AntipodalGraspGenerator(obj)
-        if cfg.gripper.grasp_sampler == "Antipodal"
-        else ContactBasedDiff(obj)
-    )
-    gripper = get_gripper(cfg.gripper)
-
-    print(
-        f"Generating grasp candidates using gripper: {cfg.gripper.name}"
-        f"\nfor object {object_id} using {cfg.gripper.grasp_sampler} sampler"
-    )
-
-    # --- output dir ---
-    output_root = os.getenv("MGS_OUTPUT_DIR") or os.path.join(os.getcwd(), "outputs")
-    output_dir = os.path.join(output_root, cfg.gripper.name, object_id)
-    os.makedirs(output_dir, exist_ok=True)
-
-    # how many are already saved (from all processes)?
-    num_total_grasps = _count_grasps_in_dir(output_dir)
-    target = int(cfg.target_grasps)
-    grasps_to_generate = target - num_total_grasps
-    if grasps_to_generate <= 0:
-        print("Nothing to do — target already met.")
-        return
-
-    print(f"Grasps to generate (target minus existing): {grasps_to_generate}")
-
-    env = GravitylessObjectGrasping(gripper, obj)
-
-    # rolling buffers
-    buf_poses, buf_joints = [], []
-
-    # per-process stats
-    total_attempts = 0
-    total_stable = 0
-    attempts_since_last_save = 0
-    stable_since_last_save = 0
-
-    # --------- RUNNING STATS & ETA (skipping warmup) ---------
-    # configurable, but safe defaults if not present in cfg
-    warmup_rounds = int(getattr(cfg, "warmup_rounds", 1))  # skip first N rounds
-    ema_alpha = float(getattr(cfg, "eta_ema_alpha", 0.25))  # smoothing for rates/times
-    start_time = time.perf_counter()
-
-    # Totals AFTER warmup (used for percentage estimates)
-    post_sampled = 0  # number of sampled poses seen
-    post_cf = 0  # number of collision-free poses
-    post_stable = 0  # number of stable poses
-
-    # Time accumulators AFTER warmup
-    post_t_sampling = 0.0  # time spent in sampler.generate_grasps
-    post_t_cf = 0.0  # time spent in env.grasp_collision_mask
-    post_t_eval = 0.0  # time spent in env.grasp_stability_evaluation_from_joints
-    post_t_e2e = 0.0  # end-to-end time measured per "evaluate" cycle
-
-    # EMAs for per-item costs (to be robust to variability)
-    ema_t_per_sample = None  # seconds per sampled pose
-    ema_t_per_cfcheck = None  # seconds per sampled pose for collision check
-    ema_t_per_eval = None  # seconds per CF pose for stability eval
-    ema_stable_per_sec = None  # stable grasps per second (local, end-to-end)
-    ema_global_grasps_per_sec = None  # global dir growth rate
-
-    # For global rate computation at save times
-    last_global_scan_time = time.perf_counter()
-    last_global_scan_total = num_total_grasps
-
-    def _ema_update(old, new):
-        if old is None:
-            return new
-        return ema_alpha * new + (1.0 - ema_alpha) * old
-
-    def _print_running_stats(round_index: int):
-        # percentages after warmup
-        cf_rate = (post_cf / post_sampled) if post_sampled > 0 else float("nan")
-        stab_rate = (post_stable / post_cf) if post_cf > 0 else float("nan")
-
-        tps = (
-            ema_t_per_sample
-            if ema_t_per_sample is not None
-            else (post_t_sampling / post_sampled if post_sampled else float("nan"))
+    for object_id in all_object_ids:
+        # --- components ---
+        obj = get_object(object_id)
+        assert cfg.gripper.grasp_sampler in [
+            "Antipodal",
+            "ContactGradient",
+        ], "Unsupported sampler"
+        sampler = (
+            AntipodalGraspGenerator(obj)
+            if cfg.gripper.grasp_sampler == "Antipodal"
+            else ContactBasedDiff(obj)
         )
-        tpc = (
-            ema_t_per_cfcheck
-            if ema_t_per_cfcheck is not None
-            else (post_t_cf / post_sampled if post_sampled else float("nan"))
-        )
-        tpe = (
-            ema_t_per_eval
-            if ema_t_per_eval is not None
-            else (post_t_eval / post_cf if post_cf else float("nan"))
-        )
-
-        local_sps = (
-            ema_stable_per_sec
-            if ema_stable_per_sec is not None
-            else (post_stable / post_t_e2e if post_t_e2e > 0 else float("nan"))
-        )
-
-        # ETAs
-        now_total = _count_grasps_in_dir(output_dir)
-        remaining = max(0, target - now_total)
-
-        local_eta = (
-            _fmt_eta(remaining / local_sps)
-            if (local_sps and math.isfinite(local_sps) and local_sps > 1e-9)
-            else "n/a"
-        )
-        global_eta = "n/a"
-        if ema_global_grasps_per_sec and ema_global_grasps_per_sec > 1e-9:
-            global_eta = _fmt_eta(remaining / ema_global_grasps_per_sec)
+        gripper = get_gripper(cfg.gripper)
 
         print(
-            "[STATS] "
-            f"round={round_index} | "
-            f"CF={cf_rate*100:.1f}% | Stable={stab_rate*100:.1f}% | "
-            f"t/sample={tps:.6f}s | t/cf={tpc:.6f}s | t/stab={tpe:.6f}s | "
-            f"local stable/s={local_sps:.3f} | "
-            f"ETA local={local_eta} | ETA global={global_eta}"
+            f"Generating grasp candidates using gripper: {cfg.gripper.name}"
+            f"\nfor object {object_id} using {cfg.gripper.grasp_sampler} sampler"
         )
 
-    def maybe_flush(final_flush: bool = False):
-        """
-        Save a chunk with a random-hash filename. After saving, re-scan the dir to
-        see if the global target is already met by any process. Also updates global ETA.
-        """
-        nonlocal buf_poses, buf_joints
-        nonlocal attempts_since_last_save, stable_since_last_save
-        nonlocal num_total_grasps, total_stable
-        nonlocal ema_global_grasps_per_sec, last_global_scan_time, last_global_scan_total
+        # --- output dir ---
+        output_root = os.getenv("MGS_OUTPUT_DIR") or os.path.join(os.getcwd(), "outputs")
+        output_dir = os.path.join(output_root, cfg.gripper.name, object_id)
+        os.makedirs(output_dir, exist_ok=True)
 
-        if not buf_poses:
-            return False
+        # how many are already saved (from all processes)?
+        num_total_grasps = _count_grasps_in_dir(output_dir)
+        target = int(cfg.target_grasps)
+        grasps_to_generate = target - num_total_grasps
+        if grasps_to_generate <= 0:
+            print("Nothing to do — target already met.")
+            return
 
-        poses_all = np.concatenate(buf_poses, axis=0)
-        joints_all = np.concatenate(buf_joints, axis=0)
+        print(f"Grasps to generate (target minus existing): {grasps_to_generate}")
 
-        # decide how many to save now
-        if final_flush:
-            want = len(poses_all)  # don't waste any grasps on exit
-        else:
-            want = min(
-                int(cfg.collect_grasps_till_save),
-                len(poses_all),
-            )
+        env = GravitylessObjectGrasping(gripper, obj)
 
-        if want <= 0:
-            return False
+        # rolling buffers
+        buf_poses, buf_joints = [], []
 
-        save_poses = poses_all[:want]
-        save_joints = joints_all[:want]
-        leftovers_poses = poses_all[want:]
-        leftovers_joints = joints_all[want:]
-        buf_poses = [leftovers_poses] if len(leftovers_poses) else []
-        buf_joints = [leftovers_joints] if len(leftovers_joints) else []
-
-        # report success rates (per-process)
-        file_sr = (
-            float(stable_since_last_save) / float(attempts_since_last_save)
-            if attempts_since_last_save > 0
-            else float("nan")
-        )
-        cum_sr = (
-            (float(total_stable) / float(total_attempts))
-            if total_attempts > 0
-            else float("nan")
-        )
-        # random-hash filename to avoid collisions between processes
-        fname = f"{int(time.time())}-{os.getpid()}-{generate_unique_hash(8)}.npz"
-        fpath = os.path.join(output_dir, fname)
-        _atomic_save_npz(
-            fpath,
-            poses=save_poses,
-            joints=save_joints,
-            success_rate_during_gen=np.asarray(file_sr),
-        )
-        print(
-            f"[SAVE] {fname} → {len(save_poses)} grasps | "
-            f"since-last-save SR={file_sr*100:.1f}% | cumulative SR={cum_sr*100:.1f}%"
-        )
+        # per-process stats
+        total_attempts = 0
+        total_stable = 0
         attempts_since_last_save = 0
         stable_since_last_save = 0
 
-        # re-scan the dir (all processes) to decide whether to continue
-        num_total_grasps = _count_grasps_in_dir(output_dir)
+        # --------- RUNNING STATS & ETA (skipping warmup) ---------
+        # configurable, but safe defaults if not present in cfg
+        warmup_rounds = int(getattr(cfg, "warmup_rounds", 1))  # skip first N rounds
+        ema_alpha = float(getattr(cfg, "eta_ema_alpha", 0.25))  # smoothing for rates/times
+        start_time = time.perf_counter()
 
-        # update global EMA rate based on observed directory growth
-        now = time.perf_counter()
-        dt = now - last_global_scan_time
-        delta = num_total_grasps - last_global_scan_total
-        if dt > 0 and delta > 0:
-            observed = delta / dt  # grasps per second, global
-            ema_global_grasps_per_sec = _ema_update(ema_global_grasps_per_sec, observed)
-            last_global_scan_time = now
-            last_global_scan_total = num_total_grasps
+        # Totals AFTER warmup (used for percentage estimates)
+        post_sampled = 0  # number of sampled poses seen
+        post_cf = 0  # number of collision-free poses
+        post_stable = 0  # number of stable poses
 
-        if num_total_grasps >= target:
-            # we still keep any local leftovers by doing a final flush on exit
-            return True  # signal: global target reached
-        return False
+        # Time accumulators AFTER warmup
+        post_t_sampling = 0.0  # time spent in sampler.generate_grasps
+        post_t_cf = 0.0  # time spent in env.grasp_collision_mask
+        post_t_eval = 0.0  # time spent in env.grasp_stability_evaluation_from_joints
+        post_t_e2e = 0.0  # end-to-end time measured per "evaluate" cycle
 
-    round_idx = 0
-    while round_idx < int(cfg.max_rounds):
-        # check global progress before starting a new round
-        num_total_grasps = _count_grasps_in_dir(output_dir)
-        if num_total_grasps >= target:
-            break
+        # EMAs for per-item costs (to be robust to variability)
+        ema_t_per_sample = None  # seconds per sampled pose
+        ema_t_per_cfcheck = None  # seconds per sampled pose for collision check
+        ema_t_per_eval = None  # seconds per CF pose for stability eval
+        ema_stable_per_sec = None  # stable grasps per second (local, end-to-end)
+        ema_global_grasps_per_sec = None  # global dir growth rate
 
-        round_idx += 1
+        # For global rate computation at save times
+        last_global_scan_time = time.perf_counter()
+        last_global_scan_total = num_total_grasps
 
-        # ---- collect collision-free grasps until eval threshold ----
-        collected_poses, collected_joints = [], []
+        def _ema_update(old, new):
+            if old is None:
+                return new
+            return ema_alpha * new + (1.0 - ema_alpha) * old
 
-        # per-round instrumentation
-        r_sampled = 0
-        r_cf = 0
-        r_stable = 0
-        r_t_sampling = 0.0
-        r_t_cf = 0.0
-        r_t_eval = 0.0
+        def _print_running_stats(round_index: int):
+            # percentages after warmup
+            cf_rate = (post_cf / post_sampled) if post_sampled > 0 else float("nan")
+            stab_rate = (post_stable / post_cf) if post_cf > 0 else float("nan")
 
-        round_start = time.perf_counter()
-
-        while sum(len(p) for p in collected_poses) < int(cfg.collect_grasps_till_eval):
-
-            # sampling
-            t0 = time.perf_counter()
-            if cfg.gripper.grasp_sampler == "Antipodal":
-                poses_mat, aux_info = sampler.generate_grasps(
-                    num=int(cfg.sample_grasps)  # type: ignore
-                )
-                padding = 0.01
-                joints = gripper.width_to_joints(aux_info["width"] + padding)
-            elif cfg.gripper.grasp_sampler == "ContactGradient":
-                all_kins = {
-                    "ShadowHand": ShadowKinematicsModel(),
-                    "AllegroGripper": AllegroKinematicsModel(),
-                    "DexeeGripper": DexeeKinematicsModel(),
-                }
-                kin_model = all_kins[cfg.gripper.name]
-                poses_mat, aux_info = sampler.generate_grasps(  # type: ignore
-                    num=int(cfg.sample_grasps), gripper=kin_model  # type: ignore
-                )
-                joints = aux_info["joints"]
-            else:
-                raise ValueError("Not known grasp sampler")
-            r_t_sampling += time.perf_counter() - t0
-
-            if len(poses_mat) == 0:
-                continue
-
-            r_sampled += int(len(poses_mat))
-
-            # collision check (mask=True means collision-free in this code path)
-            poses_se3 = SE3Pose.from_mat(poses_mat)
-            t1 = time.perf_counter()
-            collision_mask = env.grasp_collision_mask(
-                poses_se3, joints, with_padding=0.002
+            tps = (
+                ema_t_per_sample
+                if ema_t_per_sample is not None
+                else (post_t_sampling / post_sampled if post_sampled else float("nan"))
             )
-            r_t_cf += time.perf_counter() - t1
+            tpc = (
+                ema_t_per_cfcheck
+                if ema_t_per_cfcheck is not None
+                else (post_t_cf / post_sampled if post_sampled else float("nan"))
+            )
+            tpe = (
+                ema_t_per_eval
+                if ema_t_per_eval is not None
+                else (post_t_eval / post_cf if post_cf else float("nan"))
+            )
 
-            n_cf_inc = int(np.count_nonzero(collision_mask))
-            r_cf += n_cf_inc
+            local_sps = (
+                ema_stable_per_sec
+                if ema_stable_per_sec is not None
+                else (post_stable / post_t_e2e if post_t_e2e > 0 else float("nan"))
+            )
 
-            if n_cf_inc:
-                collected_poses.append(poses_se3.to_mat()[collision_mask])
-                collected_joints.append(joints[collision_mask])
+            # ETAs
+            now_total = _count_grasps_in_dir(output_dir)
+            remaining = max(0, target - now_total)
 
-        if not collected_poses:
-            continue
+            local_eta = (
+                _fmt_eta(remaining / local_sps)
+                if (local_sps and math.isfinite(local_sps) and local_sps > 1e-9)
+                else "n/a"
+            )
+            global_eta = "n/a"
+            if ema_global_grasps_per_sec and ema_global_grasps_per_sec > 1e-9:
+                global_eta = _fmt_eta(remaining / ema_global_grasps_per_sec)
 
-        cf_poses_mat = np.concatenate(collected_poses, axis=0)
-        cf_joints = np.concatenate(collected_joints, axis=0)
-        cf_poses = SE3Pose.from_mat(cf_poses_mat)
-
-        # ---- stability evaluation ----
-        t2 = time.perf_counter()
-        stable_mask = env.grasp_stability_evaluation_from_joints(
-            cf_poses, cf_joints, impulse_force=float(cfg.force)
+            print(
+                "[STATS] "
+                f"round={round_index} | "
+                f"CF={cf_rate*100:.1f}% | Stable={stab_rate*100:.1f}% | "
+                f"t/sample={tps:.6f}s | t/cf={tpc:.6f}s | t/stab={tpe:.6f}s | "
+                f"local stable/s={local_sps:.3f} | "
+                f"ETA local={local_eta} | ETA global={global_eta}"
         )
-        r_t_eval += time.perf_counter() - t2
 
-        attempts = len(cf_poses)
-        stables = int(np.count_nonzero(stable_mask))
+        def maybe_flush(final_flush: bool = False):
+            """
+            Save a chunk with a random-hash filename. After saving, re-scan the dir to
+            see if the global target is already met by any process. Also updates global ETA.
+            """
+            nonlocal buf_poses, buf_joints
+            nonlocal attempts_since_last_save, stable_since_last_save
+            nonlocal num_total_grasps, total_stable
+            nonlocal ema_global_grasps_per_sec, last_global_scan_time, last_global_scan_total
 
-        total_attempts += attempts
-        attempts_since_last_save += attempts
-        total_stable += stables
-        stable_since_last_save += stables
+            if not buf_poses:
+                return False
 
-        r_stable += stables
+            poses_all = np.concatenate(buf_poses, axis=0)
+            joints_all = np.concatenate(buf_joints, axis=0)
 
-        # update post-warmup running stats
-        if round_idx > warmup_rounds:
-            post_sampled += r_sampled
-            post_cf += r_cf
-            post_stable += r_stable
-            post_t_sampling += r_t_sampling
-            post_t_cf += r_t_cf
-            post_t_eval += r_t_eval
-
-            # end-to-end time for this evaluation cycle
-            r_t_e2e = time.perf_counter() - round_start
-            post_t_e2e += r_t_e2e
-
-            # per-item costs and throughput (EMA)
-            if r_sampled > 0:
-                ema_t_per_sample = _ema_update(
-                    ema_t_per_sample, r_t_sampling / float(r_sampled)
+            # decide how many to save now
+            if final_flush:
+                want = len(poses_all)  # don't waste any grasps on exit
+            else:
+                want = min(
+                    int(cfg.collect_grasps_till_save),
+                    len(poses_all),
                 )
-                ema_t_per_cfcheck = _ema_update(
-                    ema_t_per_cfcheck, r_t_cf / float(r_sampled)
-                )
-            if attempts > 0:
-                ema_t_per_eval = _ema_update(ema_t_per_eval, r_t_eval / float(attempts))
-            if r_t_e2e > 0:
-                ema_stable_per_sec = _ema_update(ema_stable_per_sec, r_stable / r_t_e2e)
 
-            _print_running_stats(round_idx)
+            if want <= 0:
+                return False
 
-        if stables:
-            buf_poses.append(cf_poses.to_mat()[stable_mask])
-            buf_joints.append(cf_joints[stable_mask])
+            save_poses = poses_all[:want]
+            save_joints = joints_all[:want]
+            leftovers_poses = poses_all[want:]
+            leftovers_joints = joints_all[want:]
+            buf_poses = [leftovers_poses] if len(leftovers_poses) else []
+            buf_joints = [leftovers_joints] if len(leftovers_joints) else []
 
-        # save if chunk ready
-        if sum(len(p) for p in buf_poses) >= int(cfg.collect_grasps_till_save):
-            stop = maybe_flush(final_flush=False)
-            if stop:
+            # report success rates (per-process)
+            file_sr = (
+                float(stable_since_last_save) / float(attempts_since_last_save)
+                if attempts_since_last_save > 0
+                else float("nan")
+            )
+            cum_sr = (
+                (float(total_stable) / float(total_attempts))
+                if total_attempts > 0
+                else float("nan")
+            )
+            # random-hash filename to avoid collisions between processes
+            fname = f"{int(time.time())}-{os.getpid()}-{generate_unique_hash(8)}.npz"
+            fpath = os.path.join(output_dir, fname)
+            _atomic_save_npz(
+                fpath,
+                poses=save_poses,
+                joints=save_joints,
+                success_rate_during_gen=np.asarray(file_sr),
+            )
+            print(
+                f"[SAVE] {fname} → {len(save_poses)} grasps | "
+                f"since-last-save SR={file_sr*100:.1f}% | cumulative SR={cum_sr*100:.1f}%"
+            )
+            attempts_since_last_save = 0
+            stable_since_last_save = 0
+
+            # re-scan the dir (all processes) to decide whether to continue
+            num_total_grasps = _count_grasps_in_dir(output_dir)
+
+            # update global EMA rate based on observed directory growth
+            now = time.perf_counter()
+            dt = now - last_global_scan_time
+            delta = num_total_grasps - last_global_scan_total
+            if dt > 0 and delta > 0:
+                observed = delta / dt  # grasps per second, global
+                ema_global_grasps_per_sec = _ema_update(ema_global_grasps_per_sec, observed)
+                last_global_scan_time = now
+                last_global_scan_total = num_total_grasps
+
+            if num_total_grasps >= target:
+                # we still keep any local leftovers by doing a final flush on exit
+                return True  # signal: global target reached
+            return False
+
+        round_idx = 0   
+        while round_idx < int(cfg.max_rounds):
+            # check global progress before starting a new round
+            num_total_grasps = _count_grasps_in_dir(output_dir)
+            if num_total_grasps >= target:
                 break
 
-    # final flush of leftovers so no grasps are wasted
-    if sum(len(p) for p in buf_poses):
-        _ = maybe_flush(final_flush=True)
+            round_idx += 1
 
-    print("Done!")
+            # ---- collect collision-free grasps until eval threshold ----
+            collected_poses, collected_joints = [], []
+
+            # per-round instrumentation
+            r_sampled = 0
+            r_cf = 0
+            r_stable = 0
+            r_t_sampling = 0.0
+            r_t_cf = 0.0
+            r_t_eval = 0.0
+
+            round_start = time.perf_counter()
+
+            while sum(len(p) for p in collected_poses) < int(cfg.collect_grasps_till_eval):
+
+                # sampling
+                t0 = time.perf_counter()
+                if cfg.gripper.grasp_sampler == "Antipodal":
+                    poses_mat, aux_info = sampler.generate_grasps(
+                        num=int(cfg.sample_grasps)  # type: ignore
+                    )
+                    padding = 0.01
+                    joints = gripper.width_to_joints(aux_info["width"] + padding)
+                elif cfg.gripper.grasp_sampler == "ContactGradient":
+                    all_kins = {
+                        "ShadowHand": ShadowKinematicsModel(),
+                        "AllegroGripper": AllegroKinematicsModel(),
+                        "DexeeGripper": DexeeKinematicsModel(),
+                    }
+                    kin_model = all_kins[cfg.gripper.name]
+                    poses_mat, aux_info = sampler.generate_grasps(  # type: ignore
+                        num=int(cfg.sample_grasps), gripper=kin_model  # type: ignore
+                    )
+                    joints = aux_info["joints"]
+                else:
+                    raise ValueError("Not known grasp sampler")
+                r_t_sampling += time.perf_counter() - t0
+
+                if len(poses_mat) == 0:
+                    continue
+
+                r_sampled += int(len(poses_mat))
+
+                # collision check (mask=True means collision-free in this code path)
+                poses_se3 = SE3Pose.from_mat(poses_mat)
+                t1 = time.perf_counter()
+                collision_mask = env.grasp_collision_mask(
+                    poses_se3, joints, with_padding=0.002
+                )
+                r_t_cf += time.perf_counter() - t1
+
+                n_cf_inc = int(np.count_nonzero(collision_mask))
+                r_cf += n_cf_inc
+
+                if n_cf_inc:
+                    collected_poses.append(poses_se3.to_mat()[collision_mask])
+                    collected_joints.append(joints[collision_mask])
+
+            if not collected_poses:
+                continue
+
+            cf_poses_mat = np.concatenate(collected_poses, axis=0)
+            cf_joints = np.concatenate(collected_joints, axis=0)
+            cf_poses = SE3Pose.from_mat(cf_poses_mat)
+
+            # ---- stability evaluation ----
+            t2 = time.perf_counter()
+            stable_mask = env.grasp_stability_evaluation_from_joints(
+                cf_poses, cf_joints, impulse_force=float(cfg.force)
+            )
+            r_t_eval += time.perf_counter() - t2
+
+            attempts = len(cf_poses)
+            stables = int(np.count_nonzero(stable_mask))
+
+            total_attempts += attempts
+            attempts_since_last_save += attempts
+            total_stable += stables
+            stable_since_last_save += stables
+
+            r_stable += stables
+
+            # update post-warmup running stats
+            if round_idx > warmup_rounds:
+                post_sampled += r_sampled
+                post_cf += r_cf
+                post_stable += r_stable
+                post_t_sampling += r_t_sampling
+                post_t_cf += r_t_cf
+                post_t_eval += r_t_eval
+
+                # end-to-end time for this evaluation cycle
+                r_t_e2e = time.perf_counter() - round_start
+                post_t_e2e += r_t_e2e
+
+                # per-item costs and throughput (EMA)
+                if r_sampled > 0:
+                    ema_t_per_sample = _ema_update(
+                        ema_t_per_sample, r_t_sampling / float(r_sampled)
+                    )
+                    ema_t_per_cfcheck = _ema_update(
+                        ema_t_per_cfcheck, r_t_cf / float(r_sampled)
+                    )
+                if attempts > 0:
+                    ema_t_per_eval = _ema_update(ema_t_per_eval, r_t_eval / float(attempts))
+                if r_t_e2e > 0:
+                    ema_stable_per_sec = _ema_update(ema_stable_per_sec, r_stable / r_t_e2e)
+
+                _print_running_stats(round_idx)
+
+            if stables:
+                buf_poses.append(cf_poses.to_mat()[stable_mask])
+                buf_joints.append(cf_joints[stable_mask])
+
+            # save if chunk ready
+            if sum(len(p) for p in buf_poses) >= int(cfg.collect_grasps_till_save):
+                stop = maybe_flush(final_flush=False)
+                if stop:
+                    break
+
+        # final flush of leftovers so no grasps are wasted
+        if sum(len(p) for p in buf_poses):
+            _ = maybe_flush(final_flush=True)
+
+        print("Done!")
 
 
 if __name__ == "__main__":

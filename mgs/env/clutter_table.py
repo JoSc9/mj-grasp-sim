@@ -23,6 +23,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from tqdm import tqdm
 
+from mgs import obj
 from mgs.env.base import Loadable, MjScanEnv
 from mgs.gripper.base import MjScannable, MjShakableOpenCloseGripper
 from mgs.obj.base import CollisionMeshObject
@@ -348,9 +349,11 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         nstep_lift: int = 3000,  # Steps for lifting simulation
         lift_dist: float = 0.3,  # Distance to lift
         enough_stable=None,
-        show_progress: bool = True,
+        show_progress: bool = False,
         progress_desc: str | None = None,
         inference=False,
+        with_wrong_label=False,
+        apply_external_force=False,
     ):
         """
         Evaluate grasp stability with a live tqdm progress bar.
@@ -383,14 +386,16 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         eval_count = 0  # number of grasps actually simulated (excludes 'skipped' due to enough_stable)
         skipped_count = 0  # how many we skipped after hitting enough_stable
         contact_loss_failures = 0  # failures during lift due to contact loss
-        num_wrong_object = 0 # failures due to wrong object being grasped
+        count_wrong = 0 # failures due to wrong object being grasped
 
+        initial_state = self.get_state()
         for i in range(num_grasps):
             lift_passed = True
+            correct_object = True
 
             # early stopping: we still append False to keep mask length, but don't simulate
             if enough_stable is not None and count_stable >= enough_stable:
-                results.append(False)
+                results.append(np.array([False, False]))
                 skipped_count += 1
                 # progress update
                 if pbar is not None:
@@ -445,32 +450,87 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                     lift_passed = False
                     contact_loss_failures += 1
                     break
-            if lift_passed:
-                # check if correct object grasped
-                if ids is not None:
-                    obj_id = self.collision_obj_id()
-                    if len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
+            
+            # check if grasp on correct object
+            obj_id = self.collision_obj_id()
+            if ids is not None:
+                if len(obj_id['id']) == 0 and len(obj_id["name"]) == 0:
+                    correct_object = True
+                elif len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
+                    correct_object = False
+                elif isinstance(ids[i], int):
+                    if self.object_names[ids[i]] not in obj_id['id']:
+                        correct_object = False
+                elif isinstance(ids[i], str):
+                    if ids[i] not in obj_id["name"][0]:
+                        correct_object = False
+            
+            if lift_passed and correct_object:
+                IMPULSE_FORCE_N = float(
+                    200.0
+                )  # one-step force magnitude (N) -> impulse J = F*dt
+                object_bid = self.model.body(obj_id["id"][0]).id   # apply at object COM
+                # snapshot the post-close state for deterministic, repeatable kicks
+                closed_state = self.get_state()
+                # world rotation of the grasp frame
+                Rg = pose_processed.to_mat()[:3, :3].astype(float)
+
+                # local unit axes in grasp frame
+                local_dirs = np.eye(3, dtype=float)
+                dirs_world = np.concatenate(
+                    [
+                        Rg @ local_dirs[:, [0, 1, 2]],  # +x,+y,+z
+                        -(Rg @ local_dirs[:, [0, 1, 2]]),
+                    ],
+                    axis=1,
+                ).T  # -x,-y,-z
+                # dirs_world: shape (6, 3)
+
+                for d in dirs_world:
+                    # restore saved state
+                    self.set_state(closed_state)
+                    mujoco.mj_forward(self.model, self.data)
+
+                    F = IMPULSE_FORCE_N * d
+                    for i in range(5):
+                        self.data.xfrc_applied[object_bid, :3] += F
+                        mujoco.mj_step(
+                            self.model, self.data, nstep=1
+                        )  # integrates one step
+                        self.data.xfrc_applied[object_bid, :] = (
+                            0.0  # clear so it doesn't persist
+                        )
+                        mujoco.mj_step(
+                            self.model, self.data, nstep=10
+                        )  # integrates one step
+
+                    mujoco.mj_step(self.model, self.data, nstep=500)
+                    if self.viewer:
+                        if self.viewer.is_running():
+                            self.viewer.sync()
+
+                    # check if object is still in contact with gripper
+                    if not self.check_gripper_contact():
                         lift_passed = False
-                        num_wrong_object += 1
-                    elif isinstance(ids[i], int):
-                        if self.object_names[ids[i]] not in obj_id['id']:
-                            lift_passed = False
-                            num_wrong_object += 1
-                    elif isinstance(ids[i], str):
-                        if ids[i] not in obj_id["name"][0]:
-                            lift_passed = False
-                            num_wrong_object += 1
+                        break
+                
 
-
-            results.append(lift_passed)
-            count_stable += int(lift_passed)
+            if with_wrong_label:
+                results.append(np.array([correct_object, lift_passed]))
+            else:
+                results.append(lift_passed and correct_object)
+            
+            print(f"[INFO]: id ={ids[i]}, name ={self.object_names[ids[i]]}, lift_passed = {lift_passed}, correct_object = {correct_object}")   
+            
+            count_stable += int(lift_passed and correct_object)
+            count_wrong += int(not correct_object)
 
             # progress update
             if pbar is not None:
                 sr = (count_stable / eval_count) if eval_count > 0 else 0.0
                 pbar.update(1)
                 pbar.set_postfix_str(
-                    f"succ={count_stable} fail={eval_count - count_stable} "
+                    f"succ={count_stable} fail={eval_count - count_stable}, wrong_object{count_wrong}"
                     f"skipped={skipped_count} SR={sr*100:.1f}%"
                 )
 
@@ -483,14 +543,20 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             print(
                 f"[grasp_stable_mask] evaluated={eval_count}, succ={count_stable}, "
                 f"fail={eval_count - count_stable}, skipped={skipped_count}, "
-                f"contact_fail={contact_loss_failures}, wrong object grasped fail={num_wrong_object} SR={sr*100:.1f}%"
+                f"contact_fail={contact_loss_failures}, wrong object grasped fail={count_wrong} SR={sr*100:.1f}%"
             )
 
         stable_grasp_masks = np.array(results, dtype=bool)
         if inference:
-            return stable_grasp_masks, num_wrong_object
+            return stable_grasp_masks, {
+                "count_stable": count_stable,
+                "count_failed": eval_count - count_stable,
+                "count_wrong": count_wrong}
 
-        return stable_grasp_masks
+        return stable_grasp_masks,#{ 
+                #"count_stable": count_stable,
+                #"count_failed": eval_count - count_stable,
+                #"count_wrong": count_wrong}
     
 
     def grasp_wrench_stable_mask(
@@ -747,7 +813,6 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         failed_poses: List[SE3Pose] = []
         failed_joints = []
         failed_ids = []
-        failed_labels = []
 
         num_grasps = len(poses)
         gripper_joint_idxs = self.get_joint_idxs(
@@ -758,45 +823,46 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         eval_count = 0
         contact_loss_failures = 0
 
-        max_iterations = 20
+        max_iterations = 30
 
         if enough_failed is None:
             enough_failed = 0
 
-        sigma_rot = 0.05
-        sigma_trans = 0.01
+        sigma_rot = 0.09
+        sigma_trans = 0.015
 
         for _ in range(max_iterations):
             if count_failed >= enough_failed:
                 break
 
-            
-
             delta_poses: SE3Pose = SE3Pose.randn_se3_perturb(num_grasps, sigma_rot=sigma_rot, sigma_trans=sigma_trans)
             new_poses = poses.__matmul__(delta_poses)
 
-            sigma_rot *= 1.2
-            sigma_trans +=0.02
+            #sigma_rot *= 1.2
+            #sigma_trans +=0.02
 
-            stable_mask, success_labels = self.gen_success_labels(
+            stable_mask = self.grasp_stable_mask(
                 new_poses,
                 joints,
                 ids,
-                env_state
+                env_state,
+                with_wrong_label=True,
+                apply_external_force=True,
             )
 
-            failed_poses.append(new_poses[~stable_mask])
-            failed_joints.append(joints[~stable_mask])
-            failed_ids.append(ids[~stable_mask])
-            failed_labels.append(success_labels[~stable_mask])
-            count_failed += sum(~stable_mask)
+            # TODO: only append grasps with success label [1, 0], i.e., correct object failed grasp 
+            failed_id = np.where( (stable_mask[0] ==[True, False]).all(axis=1))[0] 
+            failed_poses.append(new_poses[failed_id])
+            failed_joints.append(joints[failed_id])
+            failed_ids.append(ids[failed_id])
+            count_failed += failed_id.shape[0]  
 
-        failed_poses = [pose.to_mat()[None] for pose in failed_poses]
-        failed_poses = np.vstack(failed_poses)
-        failed_joints = np.vstack(failed_joints)
-        failed_ids = np.vstack(failed_ids).flatten()
+        failed_poses = [pose.to_mat() for pose in failed_poses]
+        failed_poses = np.concatenate(failed_poses, axis=0)
+        failed_joints = np.concatenate(failed_joints, axis=0)
+        failed_ids = np.concatenate(failed_ids, axis=0)
         
-        return failed_poses, failed_joints, failed_ids, failed_labels
+        return failed_poses, failed_joints, failed_ids
 
     def get_obj_pose(self, object_name: str):
         mujoco.mj_forward(self.model, self.data)  # type: ignore

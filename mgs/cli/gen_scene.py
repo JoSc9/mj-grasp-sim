@@ -305,15 +305,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
                 f"Not enough collision free grasps! Only: {sum(collision_free_mask)}"
             )
         
-        stable_grasp_mask, success_labels = env.gen_success_labels(
-            SE3Pose.from_mat(deepcopy(collision_free_poses), type="wxyz"),
-            deepcopy(collision_free_joints),
-            collision_free_obj_indices,
-            deepcopy(scene_def["env_state"]["state"]),
-            enough_stable=cfg.enough_stable,
-        )
-
-        #stable_grasp_mask = env.grasp_stable_mask(
+        #stable_grasp_mask, success_labels = env.gen_success_labels(
         #    SE3Pose.from_mat(deepcopy(collision_free_poses), type="wxyz"),
         #    deepcopy(collision_free_joints),
         #    collision_free_obj_indices,
@@ -321,38 +313,51 @@ def filter_grasps(cfg: DictConfig, scene_def):
         #    enough_stable=cfg.enough_stable,
         #)
 
+        # get two-length label ([correct object, successful grasp] )
+        stable_grasp_mask = env.grasp_stable_mask(
+            SE3Pose.from_mat(deepcopy(collision_free_poses), type="wxyz"),
+            deepcopy(collision_free_joints),
+            collision_free_obj_indices,
+            deepcopy(scene_def["env_state"]["state"]),
+            enough_stable=cfg.enough_stable,
+            with_wrong_label=True,
+        )
 
-        if sum(stable_grasp_mask) < cfg.min_stable:
+        # get idx of all grasps where label is [True, True]
+        stable_idx = np.where(stable_grasp_mask[0] .all(axis=1))[0] 
+        if stable_idx.shape[0] < cfg.min_stable:
             raise ValueError(
-                f"Not enough stable grasps! Only: {sum(stable_grasp_mask)}"
+                f"Not enough stable grasps! Only: {stable_idx.shape[0]}"
             )
 
-        result_poses = collision_free_poses[stable_grasp_mask]
-        result_joints = collision_free_joints[stable_grasp_mask]
-        result_obj_indices = collision_free_obj_indices[stable_grasp_mask]
-        result_success_labels = success_labels[stable_grasp_mask]
+        result_poses = collision_free_poses[stable_idx]
+        result_joints = collision_free_joints[stable_idx]
+        result_obj_indices = collision_free_obj_indices[stable_idx]
 
-        if stable_grasp_mask.shape[0] >= cfg.enough_stable:
-            stable_grasp_mask[cfg.enough_stable:] = True
+        #if stable_grasp_mask.shape[0] >= cfg.enough_stable:
+        #    stable_grasp_mask[cfg.enough_stable:] = True
 
         if cfg.with_failed_grasps:
-            failed_poses = collision_free_poses[~stable_grasp_mask]
-            failed_joints = collision_free_joints[~stable_grasp_mask]
-            failed_obj_indices = collision_free_obj_indices[~stable_grasp_mask]
-            failed_success_labels = success_labels[~stable_grasp_mask]
+            #failed_poses = collision_free_poses[~stable_grasp_mask]
+            #failed_joints = collision_free_joints[~stable_grasp_mask]
+            #failed_obj_indices = collision_free_obj_indices[~stable_grasp_mask]
+            #failed_success_labels = success_labels[~stable_grasp_mask]
+            
+            failed_poses = np.array([])
+            failed_joints = np.array([])
+            failed_obj_indices = np.array([])
 
             if failed_poses.shape[0] < cfg.enough_failed:
-                failed_poses_extra, failed_joints_extra, failed_ids_extra, failed_success_labels_extra = env.gen_failed_grasps(
+                failed_poses, failed_joints, failed_obj_indices = env.gen_failed_grasps(
                     SE3Pose.from_mat(deepcopy(result_poses), type="wxyz"),
                     deepcopy(result_joints),
                     result_obj_indices,
                     deepcopy(scene_def["env_state"]["state"]),
-                    enough_failed=cfg.enough_failed,
+                    enough_failed=cfg.enough_failed
             )
-                failed_poses = np.concat((failed_poses, failed_poses_extra), axis=0)
-                failed_joints = np.concat((failed_joints, failed_joints_extra), axis=0)
-                failed_obj_indices = np.concat((failed_obj_indices, failed_ids_extra))
-                failed_success_labels = np.concat((failed_success_labels, failed_success_labels_extra))
+                #failed_poses = np.concat((failed_poses, failed_poses_extra), axis=0)
+                #failed_joints = np.concat((failed_joints, failed_joints_extra), axis=0)
+                #failed_obj_indices = np.concat((failed_obj_indices, failed_ids_extra))
 
             if failed_poses.shape[0] < cfg.min_failed:
                 raise ValueError(
@@ -406,12 +411,22 @@ def filter_grasps(cfg: DictConfig, scene_def):
     return result, neg_result, failed_result
 
 
-@hydra.main(config_path="config", config_name="gen_scene")
+@hydra.main(version_base=None, config_path="config", config_name="gen_scene")
 def main(cfg: DictConfig):
-    output_dir = os.getenv("MGS_OUTPUT_DIR")
-    input_dir = os.getenv("MGS_INPUT_DIR")
-    assert output_dir is not None, "No ouput_dir defined!"
+    #output_dir = os.getenv("MGS_OUTPUT_DIR")
+    #input_dir = os.getenv("MGS_INPUT_DIR")
+    
+    output_dir = "/home/ws/data/outputs/new_scenes" 
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    input_dir = os.path.join(repo_root, "outputs")
+    assert output_dir is not None, "No output_dir defined!"
     assert input_dir is not None, "No input_dir defined!"
+
+    # Ensure helpers that call os.getenv("MGS_INPUT_DIR") / MGS_OUTPUT_DIR
+    # receive valid paths (prevents passing None into os.path.join).
+    os.environ.setdefault("MGS_INPUT_DIR", input_dir)
+    # set base output dir (before adding gripper/hash suffix)
+    os.environ.setdefault("MGS_OUTPUT_DIR", output_dir)
 
     output_dir = os.path.join(
         output_dir,
@@ -464,6 +479,8 @@ def main(cfg: DictConfig):
                     "joints": grasps["joints"],
                 },
             )
+            
+        print(f"Scene and grasps saved to: {output_dir}")
 
     except Exception as e:
         print(e)
