@@ -78,7 +78,10 @@ class MjScanEnv(MjSimulation):
         imgs = []
         depths = []
         segmentations = []
+        object_segmentations = [] 
         extrinsics = []
+        
+        label_mapping = {} 
         for i in range(num_images):
             self.update_camera_settings(num_images, i)
             extrinsics.append(self.get_camera_extrinsics())
@@ -104,12 +107,30 @@ class MjScanEnv(MjSimulation):
             segmentation = np.copy(segmentation[..., 0])
             segmentation = np.expand_dims(segmentation, axis=0)
             segmentations.append(segmentation)
+            
+            # get object segmentation labels
+            segmentation_labels = np.unique(segmentation)
+            for label in segmentation_labels:
+                if label != -1:
+                    geom_name = self.find_named_parent_for_geom(label)
+                    if geom_name is not None:
+                        if type(geom_name) is tuple:
+                            label_mapping[label] = geom_name[1]  
+                        else:
+                            label_mapping[label] = geom_name
+            object_segmentation = np.copy(segmentation)
+            id_back = [key for key in label_mapping.keys() 
+                       if any(word in label_mapping[key] for word in ('table', 'base', 'hand', 'finger'))]
+
+            object_segmentation[np.isin(object_segmentation, id_back)] = -1  # background
+            object_segmentations.append(object_segmentation)
 
         imgs = np.concatenate(imgs, axis=0)
         depth = np.expand_dims(np.concatenate(depths, axis=0), axis=-1)
         rgbd = np.concatenate([imgs, depth], axis=-1)
         segmentation = np.concatenate(segmentations, axis=0)
         extrinsics = np.stack(extrinsics, axis=0)
+        object_segmentation = np.concatenate(object_segmentations, axis=0)
 
         mj_transform = np.eye(4)
         mj_transform[:3, :3] = Rotation.from_quat(np.array([1.0, 0, 0, 0])).as_matrix()
@@ -128,9 +149,10 @@ class MjScanEnv(MjSimulation):
 
         rgbd[..., :-1] = rgbd[..., :-1] / 255.0
 
-        return rgbd, extrinsics, image_masks, segmentation
-
-
+        return rgbd, extrinsics, image_masks, object_segmentation, {
+            k: v for k, v in label_mapping.items() if not any(word in label_mapping[k] for word in ('table', 'base', 'hand', 'finger'))
+            }  # return label mapping excluding background
+    
 class Loadable(Protocol):
     @abstractmethod
     def to_dict(self) -> Any:

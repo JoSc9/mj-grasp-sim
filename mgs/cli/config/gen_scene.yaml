@@ -4,16 +4,16 @@
 defaults:
   - _self_
   - gripper: panda
-  - object: object_list
+  - object: subset_from_fast
   - env: clutter_table
 
-num_objects: 2
+num_objects: 5
 only_collision_free: False
 save_collision_grasps: True
 with_failed_grasps: True
-min_stable: 300
+min_stable: 150
 enough_stable: 600
-min_failed: 300
+min_failed: 150
 enough_failed: 600
 hydra:
   job:

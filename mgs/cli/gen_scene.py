@@ -216,7 +216,7 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
 
 
 def filter_grasps(cfg: DictConfig, scene_def):
-    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)))
+    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)), headless=True)
 
     all_grasps = []
     for obj_name, obj_id in zip(env.object_names, env.object_ids):
@@ -412,8 +412,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
 
 
 @hydra.main(version_base=None, config_path="config", config_name="gen_scene")
-def main(cfg: DictConfig):
-    #output_dir = os.getenv("MGS_OUTPUT_DIR")
+def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
     #input_dir = os.getenv("MGS_INPUT_DIR")
     
     output_dir = "/home/ws/data/outputs/new_scenes" 

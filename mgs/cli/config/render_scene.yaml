@@ -8,6 +8,7 @@ defaults:
 
 num_images: 200
 id: 0
+input_id: "0"
 
 hydra:
   job:

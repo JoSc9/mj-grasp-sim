@@ -4,8 +4,15 @@ import numpy as np
 
 
 def voxel_downsample_pcd(
-    points: np.ndarray, features: np.ndarray, voxel_size: float
+    points: np.ndarray, features: np.ndarray, voxel_size: float, segmentation_label=None
 ) -> Tuple[np.ndarray, np.ndarray]:
+    if segmentation_label is not None:
+        if points.shape[0]  != segmentation_label.shape[0]:
+            raise ValueError(
+                "points and segmentation_label must have the same number of points"
+            ) 
+    
+    
     mins = np.min(points, axis=0)  # Shape: (3,)
     vox_idx = np.floor_divide(points - mins, voxel_size).astype(
         np.int64
@@ -32,6 +39,32 @@ def voxel_downsample_pcd(
     ]  # Shape: (num_nonzero_voxels, 1)
     feature_vox /= n_pts_per_vox_nonzero
     coord_vox /= n_pts_per_vox_nonzero
+    # If segmentation labels were provided, compute a label per voxel.
+    if segmentation_label is not None:
+        seg = np.asarray(segmentation_label)
+        # Vectorized majority-vote per non-empty voxel.
+        # Group points by their raveled voxel index into contiguous groups
+        uniq_vox, inv = np.unique(raveled_idx, return_inverse=True)
+
+        # Remap labels to 0..L-1 so we can use a single bincount
+        uniq_labels, labels_inv = np.unique(seg, return_inverse=True)
+        L = uniq_labels.size
+        M = uniq_vox.shape[0]
+
+        # Combined index: for each point, group_index * L + label_index
+        comb = inv * L + labels_inv
+        counts_gl = np.bincount(comb, minlength=M * L).reshape(M, L)
+        majority_idx = counts_gl.argmax(axis=1)
+        label_vox = uniq_labels[majority_idx]
+
+        # Ensure ordering matches `nonzero_vox` (should usually be equal)
+        if not np.array_equal(uniq_vox, nonzero_vox):
+            pos = np.searchsorted(nonzero_vox, uniq_vox)
+            reordered = np.empty(nonzero_vox.shape[0], dtype=label_vox.dtype)
+            reordered[pos] = label_vox
+            label_vox = reordered
+
+        return coord_vox, feature_vox, label_vox
 
     return coord_vox, feature_vox
 

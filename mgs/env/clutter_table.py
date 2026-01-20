@@ -346,7 +346,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         joints: np.ndarray,
         ids: np.ndarray,
         env_state,
-        nstep_lift: int = 3000,  # Steps for lifting simulation
+        nstep_lift: int = 2000,  # Steps for lifting simulation
         lift_dist: float = 0.3,  # Distance to lift
         enough_stable=None,
         show_progress: bool = False,
@@ -455,64 +455,69 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             obj_id = self.collision_obj_id()
             if ids is not None:
                 if len(obj_id['id']) == 0 and len(obj_id["name"]) == 0:
-                    correct_object = True
+                    # grasped no object
+                    correct_object = False
                 elif len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
+                    # grasped more than one object
                     correct_object = False
                 elif isinstance(ids[i], int):
                     if self.object_names[ids[i]] not in obj_id['id']:
+                        # grasped wrong object
                         correct_object = False
                 elif isinstance(ids[i], str):
                     if ids[i] not in obj_id["name"][0]:
+                        # grasped wrong object
                         correct_object = False
             
             if lift_passed and correct_object:
-                IMPULSE_FORCE_N = float(
-                    200.0
-                )  # one-step force magnitude (N) -> impulse J = F*dt
-                object_bid = self.model.body(obj_id["id"][0]).id   # apply at object COM
-                # snapshot the post-close state for deterministic, repeatable kicks
-                closed_state = self.get_state()
-                # world rotation of the grasp frame
-                Rg = pose_processed.to_mat()[:3, :3].astype(float)
+                if apply_external_force:
+                    IMPULSE_FORCE_N = float(
+                        200.0
+                    )  # one-step force magnitude (N) -> impulse J = F*dt
+                    object_bid = self.model.body(obj_id["id"][0]).id   # apply at object COM
+                    # snapshot the post-close state for deterministic, repeatable kicks
+                    closed_state = self.get_state()
+                    # world rotation of the grasp frame
+                    Rg = pose_processed.to_mat()[:3, :3].astype(float)
 
-                # local unit axes in grasp frame
-                local_dirs = np.eye(3, dtype=float)
-                dirs_world = np.concatenate(
-                    [
-                        Rg @ local_dirs[:, [0, 1, 2]],  # +x,+y,+z
-                        -(Rg @ local_dirs[:, [0, 1, 2]]),
-                    ],
-                    axis=1,
-                ).T  # -x,-y,-z
-                # dirs_world: shape (6, 3)
+                    # local unit axes in grasp frame
+                    local_dirs = np.eye(3, dtype=float)
+                    dirs_world = np.concatenate(
+                        [
+                            Rg @ local_dirs[:, [0, 1, 2]],  # +x,+y,+z
+                            -(Rg @ local_dirs[:, [0, 1, 2]]),
+                        ],
+                        axis=1,
+                    ).T  # -x,-y,-z
+                    # dirs_world: shape (6, 3)
 
-                for d in dirs_world:
-                    # restore saved state
-                    self.set_state(closed_state)
-                    mujoco.mj_forward(self.model, self.data)
+                    for d in dirs_world:
+                        # restore saved state
+                        self.set_state(closed_state)
+                        mujoco.mj_forward(self.model, self.data)
 
-                    F = IMPULSE_FORCE_N * d
-                    for i in range(5):
-                        self.data.xfrc_applied[object_bid, :3] += F
-                        mujoco.mj_step(
-                            self.model, self.data, nstep=1
-                        )  # integrates one step
-                        self.data.xfrc_applied[object_bid, :] = (
-                            0.0  # clear so it doesn't persist
-                        )
-                        mujoco.mj_step(
-                            self.model, self.data, nstep=10
-                        )  # integrates one step
+                        F = IMPULSE_FORCE_N * d
+                        for i in range(5):
+                            self.data.xfrc_applied[object_bid, :3] += F
+                            mujoco.mj_step(
+                                self.model, self.data, nstep=1
+                            )  # integrates one step
+                            self.data.xfrc_applied[object_bid, :] = (
+                                0.0  # clear so it doesn't persist
+                            )
+                            mujoco.mj_step(
+                                self.model, self.data, nstep=10
+                            )  # integrates one step
 
-                    mujoco.mj_step(self.model, self.data, nstep=500)
-                    if self.viewer:
-                        if self.viewer.is_running():
-                            self.viewer.sync()
+                        mujoco.mj_step(self.model, self.data, nstep=500)
+                        if self.viewer:
+                            if self.viewer.is_running():
+                                self.viewer.sync()
 
-                    # check if object is still in contact with gripper
-                    if not self.check_gripper_contact():
-                        lift_passed = False
-                        break
+                        # check if object is still in contact with gripper
+                        if not self.check_gripper_contact():
+                            lift_passed = False
+                            break
                 
 
             if with_wrong_label:
@@ -520,7 +525,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             else:
                 results.append(lift_passed and correct_object)
             
-            print(f"[INFO]: id ={ids[i]}, name ={self.object_names[ids[i]]}, lift_passed = {lift_passed}, correct_object = {correct_object}")   
+            #print(f"[INFO]: id ={ids[i]}, lift_passed = {lift_passed}, correct_object = {correct_object}")   
             
             count_stable += int(lift_passed and correct_object)
             count_wrong += int(not correct_object)
@@ -567,6 +572,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         env_state,
         nstep_lift: int = 3000,  # Steps for lifting simulation
         lift_dist: float = 0.3,  # Distance to lift
+        apply_external_force: bool = False,
         ext_force_max = 3.,
         ext_torque_max = 0.5,
         enough_stable=None,
@@ -654,51 +660,53 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                     lift_passed = False
                     contact_loss_failures += 1
                     break
+            
             if lift_passed:
-                obj_id = self.collision_obj_id()
-                if len(obj_id) != 1 or self.object_names[ids[i]] not in obj_id:
-                    lift_passed = False
+                if apply_external_force:
+                    obj_id = self.collision_obj_id()
+                    if len(obj_id) != 1 or self.object_names[ids[i]] not in obj_id:
+                        lift_passed = False
 
-                # apply external wrench and check stability
-                # get approach vector from pose
-                pose_mat = poses[i].to_mat()
-                approach_vector = pose_mat[:3, :3] @ np.array([0, 0, -1])  # z-axis in gripper frame   
-                approach_vector /= np.linalg.norm(approach_vector)
+                    # apply external wrench and check stability
+                    # get approach vector from pose
+                    pose_mat = poses[i].to_mat()
+                    approach_vector = pose_mat[:3, :3] @ np.array([0, 0, -1])  # z-axis in gripper frame   
+                    approach_vector /= np.linalg.norm(approach_vector)
 
-                # get wrench on object in approach direction
-                ext_force = np.arange(0.1, ext_force_max + 0.1, 0.1)
+                    # get wrench on object in approach direction
+                    ext_force = np.arange(0.1, ext_force_max + 0.1, 0.1)
 
-                # apply force on object in approach direction
-                for f in ext_force:
-                    force_vector = f * approach_vector
-                    mujoco.mj_applyFT(  # type: ignore
-                        self.model,
-                        self.data,
-                        force_vector,
-                        np.array([0.0, 0.0, 0.0]),
-                        mujoco.mj_name2id(  # type: ignore
+                    # apply force on object in approach direction
+                    for f in ext_force:
+                        force_vector = f * approach_vector
+                        mujoco.mj_applyFT(  # type: ignore
                             self.model,
-                            self.object_names[ids[i]] + ":body",
-                            mujoco.mjtObj.mjOBJ_BODY,  # type: ignore
-                        ),
-                    )
+                            self.data,
+                            force_vector,
+                            np.array([0.0, 0.0, 0.0]),
+                            mujoco.mj_name2id(  # type: ignore
+                                self.model,
+                                self.object_names[ids[i]] + ":body",
+                                mujoco.mjtObj.mjOBJ_BODY,  # type: ignore
+                            ),
+                        )
 
-                    # simulate for a short duration to see if grasp holds
-                    perturb_step = 0
-                    while perturb_step < 100:
-                        mujoco.mj_step(self.model, self.data)
-                        if self.viewer:
-                            if self.viewer.is_running():
-                                self.viewer.sync()
-                        perturb_step += 1
+                        # simulate for a short duration to see if grasp holds
+                        perturb_step = 0
+                        while perturb_step < 100:
+                            mujoco.mj_step(self.model, self.data)
+                            if self.viewer:
+                                if self.viewer.is_running():
+                                    self.viewer.sync()
+                            perturb_step += 1
 
-                        # check if object is still in contact with gripper
-                        if not self.check_gripper_contact():
-                            lift_passed = False
-                            break
+                            # check if object is still in contact with gripper
+                            if not self.check_gripper_contact():
+                                lift_passed = False
+                                break
 
                 
-                perturb_step = 0
+                    perturb_step = 0
 
 
             results.append(lift_passed)
@@ -797,7 +805,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         joints: np.ndarray,
         ids: np.ndarray,
         env_state,
-        nstep_lift: int = 3000,  # Steps for lifting simulation
+        nstep_lift: int = 2000,  # Steps for lifting simulation
         lift_dist: float = 0.3,  # Distance to lift
         enough_failed=None,
         show_progress: bool = True,

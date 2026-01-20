@@ -11,16 +11,16 @@ from mgs.gripper.base import MjScannableGripper
 from mgs.gripper.selector import get_gripper
 from mgs.sampler.helper import farthest_point_sampling
 from mgs.util.img_proc import detect_outlier, rgbd_to_pcd, voxel_downsample_pcd
+import mujoco
 
 
 def scan(cfg: DictConfig, scene_def):
     gripper = get_gripper(cfg.gripper)
     assert isinstance(gripper, MjScannableGripper)
     env = get_env_from_dict(cfg.env, (deepcopy(scene_def)))
-    images, extrinsics, image_masks, _ = env.scan(num_images=cfg.num_images)
+    images, extrinsics, image_masks, segmentation_mask, segmentation_labels  = env.scan(num_images=cfg.num_images)
     intrinsics = env.get_camera_intrinsics()
-    return images, extrinsics, intrinsics, image_masks
-
+    return images, extrinsics, intrinsics, image_masks, segmentation_mask, segmentation_labels
 
 @hydra.main(config_path="config", config_name="render_scene")
 def main(cfg: DictConfig):
@@ -42,9 +42,14 @@ def main(cfg: DictConfig):
     #os.environ.setdefault("MGS_OUTPUT_DIR", output_dir)
 
     input_dir_all = os.path.join(input_dir_all, cfg.gripper.name)
+     
     scene_dir_list = [
         d for d in os.listdir(input_dir_all) if os.path.isdir(os.path.join(input_dir_all, d))
     ]
+    
+    # filter all scene where file name is starting with cfg.input_id
+    print(cfg.input_id)
+    scene_dir_list = [d for d in scene_dir_list if d.startswith(str(cfg.input_id))]
 
     num  = len(scene_dir_list)
     count = 1
@@ -56,12 +61,13 @@ def main(cfg: DictConfig):
         scene_path = os.path.join(input_dir, "scene.npz")
         scene = np.load(scene_path, allow_pickle=True)
         scene_dict = scene["scene_definition"].item()
-        images, extrinsics, intrinsics, image_masks = scan(
+        images, extrinsics, intrinsics, image_masks, segmentation_label, segmentation_label_names = scan(
             deepcopy(cfg), deepcopy(scene_dict)
         )
         pcd, feature = rgbd_to_pcd(images, intrinsics, extrinsics)
         pcd = pcd[image_masks]
         feature = feature[image_masks]
+        segmentation_label = segmentation_label[image_masks]
 
         region_mask = np.all(
             (pcd < np.array([[0.225, 0.225, 1.0]]))
@@ -70,15 +76,17 @@ def main(cfg: DictConfig):
         )
         pcd = pcd[region_mask]
         feature = feature[region_mask]
-
-        pcd, feature = voxel_downsample_pcd(pcd, feature, voxel_size=0.002)
+        segmentation_label = segmentation_label[region_mask]
+        
+        pcd, feature, segmentation_label = voxel_downsample_pcd(pcd, feature, voxel_size=0.002, segmentation_label=segmentation_label)
         mask = detect_outlier(pcd, radius=0.008, min_neighbors=2)
-        pcd, feature = pcd[mask], feature[mask]
+        pcd, feature, segmentation_label = pcd[mask], feature[mask], segmentation_label[mask]
         idx = farthest_point_sampling(
             jnp.asarray(pcd, dtype=jnp.float32), num_samples=15000
         )
         pcd = pcd[idx]
         feature = feature[idx]
+        segmentation_label = segmentation_label[idx]
 
         output_dir = os.path.join(output_dir_all, cfg.gripper.name, scene_dir)
         os.makedirs(output_dir, exist_ok=True)
@@ -87,6 +95,8 @@ def main(cfg: DictConfig):
             **{
                 "points": np.asarray(pcd, dtype=np.float32),
                 "colors": np.asarray(feature, dtype=np.float32),
+                "labels": np.asarray(segmentation_label, dtype=np.int32),
+                "label_names": segmentation_label_names
             },
         )
         print(f"Finished with scene {count} of {num}!")
