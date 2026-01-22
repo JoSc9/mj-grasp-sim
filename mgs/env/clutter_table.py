@@ -213,8 +213,10 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         def random_pose():
             scipy_random_quat = Rotation.random().as_quat()  # type: ignore
             mujoco_random_quat = quat_xyzw_to_wxyz(scipy_random_quat)
+            if np.random.rand() < 0.1:
+                mujoco_random_quat = np.array([1, 0, 0, 0]) 
             return SE3Pose(
-                pos=np.array([0.0, 0.0, 0.8]), quat=mujoco_random_quat, type="wxyz"
+                pos=np.array([np.random.normal(0., 0.02), np.random.normal(0., 0.02), 0.4]), quat=mujoco_random_quat, type="wxyz"
             )
 
         drop_pose = random_pose()
@@ -349,11 +351,13 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         nstep_lift: int = 2000,  # Steps for lifting simulation
         lift_dist: float = 0.3,  # Distance to lift
         enough_stable=None,
+        enough_failed=None,
         show_progress: bool = False,
         progress_desc: str | None = None,
         inference=False,
         with_wrong_label=False,
         apply_external_force=False,
+        check_wrong_object=False,
     ):
         """
         Evaluate grasp stability with a live tqdm progress bar.
@@ -385,29 +389,29 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         count_stable = 0  # number of successful grasps
         eval_count = 0  # number of grasps actually simulated (excludes 'skipped' due to enough_stable)
         skipped_count = 0  # how many we skipped after hitting enough_stable
-        contact_loss_failures = 0  # failures during lift due to contact loss
+        count_fail = 0  # failures during lift due to contact loss
         count_wrong = 0 # failures due to wrong object being grasped
 
-        initial_state = self.get_state()
         for i in range(num_grasps):
             lift_passed = True
             correct_object = True
 
             # early stopping: we still append False to keep mask length, but don't simulate
             if enough_stable is not None and count_stable >= enough_stable:
-                results.append(np.array([False, False]))
-                skipped_count += 1
-                # progress update
-                if pbar is not None:
-                    sr = (count_stable / eval_count) if eval_count > 0 else 0.0
-                    pbar.update(1)
-                    pbar.set_postfix_str(
-                        f"succ={count_stable} fail={eval_count - count_stable} "
-                        f"skipped={skipped_count} SR={sr*100:.1f}%"
-                    )
-                continue
+                    results.append(np.array([None, None])) if with_wrong_label else results.append(None)
+                    skipped_count += 1
+                    # progress update
+                    if pbar is not None:
+                        sr = (count_stable / eval_count) if eval_count > 0 else 0.0
+                        pbar.update(1)
+                        pbar.set_postfix_str(
+                            f"succ={count_stable} fail={eval_count - count_stable} "
+                            f"skipped={skipped_count} SR={sr*100:.1f}%"
+                        )
+                    continue
 
             # restore environment state for each evaluation
+            
             spec = mujoco.mjtState.mjSTATE_INTEGRATION
             mujoco.mj_setState(self.model, self.data, env_state, spec)
 
@@ -425,6 +429,9 @@ class ClutterTableEnv(MjScanEnv, Loadable):
 
             # Update geom positions, then close
             mujoco.mj_forward(self.model, self.data)
+            if self.viewer:
+                if self.viewer.is_running():
+                    self.viewer.sync()
             self.gripper.close_gripper_at(self, pose_processed)
             
             if self.viewer:
@@ -448,27 +455,28 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 # every 100 steps, verify contact
                 if (t + 1) % 100 == 0 and not self.check_gripper_contact():
                     lift_passed = False
-                    contact_loss_failures += 1
+                    count_fail += 1
                     break
             
             # check if grasp on correct object
             obj_id = self.collision_obj_id()
-            if ids is not None:
-                if len(obj_id['id']) == 0 and len(obj_id["name"]) == 0:
-                    # grasped no object
-                    correct_object = False
-                elif len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
-                    # grasped more than one object
-                    correct_object = False
-                elif isinstance(ids[i], int):
-                    if self.object_names[ids[i]] not in obj_id['id']:
-                        # grasped wrong object
+            if check_wrong_object:
+                if ids is not None:
+                    if len(obj_id['id']) == 0 and len(obj_id["name"]) == 0:
+                        # grasped no object
                         correct_object = False
-                elif isinstance(ids[i], str):
-                    if ids[i] not in obj_id["name"][0]:
-                        # grasped wrong object
+                    elif len(obj_id['id']) != 1 or len(obj_id["name"]) != 1:
+                        # grasped more than one object
                         correct_object = False
-            
+                    elif isinstance(ids[i], int):
+                        if self.object_names[ids[i]] not in obj_id['id']:
+                            # grasped wrong object
+                            correct_object = False
+                    elif isinstance(ids[i], str):
+                        if ids[i] not in obj_id["name"][0]:
+                            # grasped wrong object
+                            correct_object = False
+                
             if lift_passed and correct_object:
                 if apply_external_force:
                     IMPULSE_FORCE_N = float(
@@ -494,7 +502,6 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                     for d in dirs_world:
                         # restore saved state
                         self.set_state(closed_state)
-                        mujoco.mj_forward(self.model, self.data)
 
                         F = IMPULSE_FORCE_N * d
                         for i in range(5):
@@ -548,10 +555,10 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             print(
                 f"[grasp_stable_mask] evaluated={eval_count}, succ={count_stable}, "
                 f"fail={eval_count - count_stable}, skipped={skipped_count}, "
-                f"contact_fail={contact_loss_failures}, wrong object grasped fail={count_wrong} SR={sr*100:.1f}%"
+                f"contact_fail={count_fail}, wrong object grasped fail={count_wrong} SR={sr*100:.1f}%"
             )
 
-        stable_grasp_masks = np.array(results, dtype=bool)
+        stable_grasp_masks = np.array(results, dtype=object)
         if inference:
             return stable_grasp_masks, {
                 "count_stable": count_stable,
@@ -629,8 +636,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 continue
 
             # restore environment state for each evaluation
-            spec = mujoco.mjtState.mjSTATE_INTEGRATION
-            mujoco.mj_setState(self.model, self.data, env_state, spec)
+            self.set_state(env_state)
 
             b2c = self.gripper.base_to_contact_transform()
             pose_processed = poses[i] @ b2c
@@ -826,44 +832,58 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         gripper_joint_idxs = self.get_joint_idxs(
             self.gripper.get_actuator_joint_names()
         )
-
         count_failed = 0  # number of successful grasps
-        eval_count = 0
-        contact_loss_failures = 0
 
         max_iterations = 30
 
-        if enough_failed is None:
-            enough_failed = 0
-
         sigma_rot = 0.09
-        sigma_trans = 0.015
-
+        sigma_trans = 0.005
+        
+        # for each grasp store probability of failure when displacing it, then sample from these grasps
+        prob = np.ones(num_grasps) / num_grasps
+        indices = np.arange(num_grasps)
         for _ in range(max_iterations):
-            if count_failed >= enough_failed:
+            if enough_failed is not None and count_failed >= enough_failed:
                 break
+            
+            # only apply rotation with certain probability
+            if np.random.rand() < 0.25:
+                delta_poses: SE3Pose = SE3Pose.randn_se3_perturb(num_grasps, sigma_rot=0.12, sigma_trans=0.)
+            else:
+                delta_poses: SE3Pose = SE3Pose.randn_se3_perturb(num_grasps, sigma_rot=sigma_rot, sigma_trans=sigma_trans)
+            candidate_poses = poses[indices] .__matmul__(delta_poses)
 
-            delta_poses: SE3Pose = SE3Pose.randn_se3_perturb(num_grasps, sigma_rot=sigma_rot, sigma_trans=sigma_trans)
-            new_poses = poses.__matmul__(delta_poses)
+            # add perturbation on gripper width
+            # max width on panda is 0.08
+            #new_joints = joints[indices] 
+            #if np.random.rand() < 1.0:
+            #    current_widths = new_joints[:, 0] + 0.04 + new_joints[:, 1]  
+            #    new_joints = self.gripper.width_to_joints(current_widths + np.random.normal(0., 0.01, size=current_widths.shape[0]))
 
-            #sigma_rot *= 1.2
-            #sigma_trans +=0.02
-
+            candidate_joints = joints[indices]
+            candidate_ids = ids[indices]
             stable_mask = self.grasp_stable_mask(
-                new_poses,
-                joints,
-                ids,
+                candidate_poses,
+                candidate_joints,
+                candidate_ids,
                 env_state,
                 with_wrong_label=True,
                 apply_external_force=True,
+                check_wrong_object=False,
             )
 
             # TODO: only append grasps with success label [1, 0], i.e., correct object failed grasp 
-            failed_id = np.where( (stable_mask[0] ==[True, False]).all(axis=1))[0] 
-            failed_poses.append(new_poses[failed_id])
-            failed_joints.append(joints[failed_id])
-            failed_ids.append(ids[failed_id])
-            count_failed += failed_id.shape[0]  
+            failed_idx = np.where( (stable_mask[0] ==[True, False]).all(axis=1))[0] 
+            success_idx = np.where( (stable_mask[0] ==[True, True]).all(axis=1))[0]
+            failed_poses.append(candidate_poses[failed_idx])
+            failed_joints.append(candidate_joints[failed_idx])
+            failed_ids.append(candidate_ids[failed_idx])
+            count_failed += failed_idx.shape[0]  
+            
+            # update probability
+            prob[indices[success_idx]] /= 0.05
+            prob = prob / np.sum(prob)
+            indices = np.random.choice(num_grasps, size=num_grasps, replace=True, p=prob)
 
         failed_poses = [pose.to_mat() for pose in failed_poses]
         failed_poses = np.concatenate(failed_poses, axis=0)

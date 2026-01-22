@@ -191,7 +191,7 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
                 np.array([5.0, 5.0, 1.0]), np.array([1.0, 0.0, 0.0, 0.0]), type="wxyz"
             ),
         )
-        env = get_env(cfg.env, gripper=deepcopy(gripper), obj_list=deepcopy(obj_list))
+        env = get_env(cfg.env, gripper=deepcopy(gripper), obj_list=deepcopy(obj_list), headless=True)
         env.gen_clutter()
         scene_dict = env.to_dict()
 
@@ -300,6 +300,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
         collision_free_joints = collision_free_joints[order]
         collision_free_obj_indices = collision_free_obj_indices[order]
 
+        print(f"Total collision-free grasps: {len(collision_free_poses)}")
         if sum(collision_free_mask) < cfg.min_stable:
             raise ValueError(
                 f"Not enough collision free grasps! Only: {sum(collision_free_mask)}"
@@ -320,11 +321,15 @@ def filter_grasps(cfg: DictConfig, scene_def):
             collision_free_obj_indices,
             deepcopy(scene_def["env_state"]["state"]),
             enough_stable=cfg.enough_stable,
+            enough_failed=cfg.enough_failed,
             with_wrong_label=True,
+            apply_external_force=True,
+            check_wrong_object=False,
         )
 
         # get idx of all grasps where label is [True, True]
-        stable_idx = np.where(stable_grasp_mask[0] .all(axis=1))[0] 
+        stable_idx = np.where(stable_grasp_mask[0].all(axis=1))[0]
+        unstable_idx = np.where((stable_grasp_mask[0][:, 0] == True) & (stable_grasp_mask[0][:, 1] == False))[0] 
         if stable_idx.shape[0] < cfg.min_stable:
             raise ValueError(
                 f"Not enough stable grasps! Only: {stable_idx.shape[0]}"
@@ -338,26 +343,27 @@ def filter_grasps(cfg: DictConfig, scene_def):
         #    stable_grasp_mask[cfg.enough_stable:] = True
 
         if cfg.with_failed_grasps:
-            #failed_poses = collision_free_poses[~stable_grasp_mask]
-            #failed_joints = collision_free_joints[~stable_grasp_mask]
-            #failed_obj_indices = collision_free_obj_indices[~stable_grasp_mask]
-            #failed_success_labels = success_labels[~stable_grasp_mask]
+            # take unstalbe grasps as initial set of failed grasps
+            failed_poses = collision_free_poses[unstable_idx]
+            failed_joints = collision_free_joints[unstable_idx]
+            failed_obj_indices = collision_free_obj_indices[unstable_idx]
             
-            failed_poses = np.array([])
-            failed_joints = np.array([])
-            failed_obj_indices = np.array([])
+            
+            #failed_poses = np.array([])
+            #failed_joints = np.array([])
+            #failed_obj_indices = np.array([])
 
             if failed_poses.shape[0] < cfg.enough_failed:
-                failed_poses, failed_joints, failed_obj_indices = env.gen_failed_grasps(
-                    SE3Pose.from_mat(deepcopy(result_poses), type="wxyz"),
-                    deepcopy(result_joints),
-                    result_obj_indices,
+                failed_poses_extra, failed_joints_extra, failed_obj_indices_extra = env.gen_failed_grasps(
+                    SE3Pose.from_mat(deepcopy(collision_free_poses[np.concat((stable_idx, unstable_idx))]), type="wxyz"),
+                    deepcopy(collision_free_joints[np.concat((stable_idx, unstable_idx))]),
+                    collision_free_obj_indices[np.concat((stable_idx, unstable_idx))],
                     deepcopy(scene_def["env_state"]["state"]),
                     enough_failed=cfg.enough_failed
             )
-                #failed_poses = np.concat((failed_poses, failed_poses_extra), axis=0)
-                #failed_joints = np.concat((failed_joints, failed_joints_extra), axis=0)
-                #failed_obj_indices = np.concat((failed_obj_indices, failed_ids_extra))
+                failed_poses = np.concat((failed_poses, failed_poses_extra), axis=0)
+                failed_joints = np.concat((failed_joints, failed_joints_extra), axis=0)
+                failed_obj_indices = np.concat((failed_obj_indices, failed_obj_indices_extra), axis=0)
 
             if failed_poses.shape[0] < cfg.min_failed:
                 raise ValueError(
