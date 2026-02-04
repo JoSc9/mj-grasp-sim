@@ -214,7 +214,9 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             scipy_random_quat = Rotation.random().as_quat()  # type: ignore
             mujoco_random_quat = quat_xyzw_to_wxyz(scipy_random_quat)
             if np.random.rand() < 0.1:
-                mujoco_random_quat = np.array([1, 0, 0, 0]) 
+                # sample rotation angle around z-axis
+                scipy_random_quat = Rotation.from_euler("z", np.random.uniform(0, 2 * np.pi)).as_quat() 
+                mujoco_random_quat = quat_xyzw_to_wxyz(scipy_random_quat)
             return SE3Pose(
                 pos=np.array([np.random.normal(0., 0.02), np.random.normal(0., 0.02), 0.4]), quat=mujoco_random_quat, type="wxyz"
             )
@@ -341,6 +343,125 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                         collision_obj['name'].append(self.object_ids[idx])
         return collision_obj
 
+    
+    
+    def grasp_stable_mask_bench(
+        self,
+        poses: SE3Pose,
+        joints: np.ndarray,
+        env_state,
+        nstep_lift: int = 3000,  # Steps for lifting simulation
+        lift_dist: float = 0.3,  # Distance to lift
+        enough_stable=None,
+        show_progress: bool = True,
+        progress_desc: str | None = None,
+    ):
+        """
+        Evaluate grasp stability with a live tqdm progress bar.
+        Shows running success rate, success/fail counts, evaluated count, and skips (if enough_stable triggers).
+
+        If tqdm is not installed/available, progress is silently disabled.
+        """
+        # lazy import tqdm; fall back gracefully
+        pbar = None
+        if show_progress:
+            try:
+                from tqdm.auto import tqdm  # type: ignore
+
+                pbar = tqdm(
+                    total=len(poses),
+                    desc=progress_desc or "Evaluating grasps",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+            except Exception:
+                pbar = None  # disable progress if tqdm missing or no TTY
+
+        results: List[bool] = []
+        num_grasps = len(poses)
+        gripper_joint_idxs = self.get_joint_idxs(
+            self.gripper.get_actuator_joint_names()
+        )
+
+        count_stable = 0  # number of successful grasps
+        eval_count = 0  # number of grasps actually simulated (excludes 'skipped' due to enough_stable)
+        skipped_count = 0  # how many we skipped after hitting enough_stable
+        contact_loss_failures = 0  # failures during lift due to contact loss
+
+        for i in range(num_grasps):
+            lift_passed = True
+
+            # early stopping: we still append False to keep mask length, but don't simulate
+            if enough_stable is not None and count_stable >= enough_stable:
+                results.append(False)
+                skipped_count += 1
+                # progress update
+                if pbar is not None:
+                    sr = (count_stable / eval_count) if eval_count > 0 else 0.0
+                    pbar.update(1)
+                    pbar.set_postfix_str(
+                        f"succ={count_stable} fail={eval_count - count_stable} "
+                        f"skipped={skipped_count} SR={sr*100:.1f}%"
+                    )
+                continue
+
+            # restore environment state for each evaluation
+            spec = mujoco.mjtState.mjSTATE_INTEGRATION
+            mujoco.mj_setState(self.model, self.data, env_state, spec)
+
+            b2c = self.gripper.base_to_contact_transform()
+            pose_processed = poses[i] @ b2c
+            self.set_qpos(joints[i], gripper_joint_idxs)
+            self.gripper.set_pose(self, pose_processed)
+
+            # Update geom positions, then close
+            mujoco.mj_forward(self.model, self.data)
+            self.gripper.close_gripper_at(self, pose_processed)
+
+            # --- Lift test ---
+            eval_count += 1
+            start_pos_lift = np.copy(self.data.mocap_pos[0, :])
+            lift_target_z = start_pos_lift[2] + lift_dist
+            for t in range(nstep_lift):
+                alpha = t / nstep_lift
+                self.data.mocap_pos[0, 2] = (
+                    start_pos_lift[2] + (lift_target_z - start_pos_lift[2]) * alpha
+                )
+                mujoco.mj_step(self.model, self.data)
+
+                # every 100 steps, verify contact
+                if (t + 1) % 100 == 0 and not self.check_gripper_contact():
+                    lift_passed = False
+                    contact_loss_failures += 1
+                    break
+
+            results.append(lift_passed)
+            count_stable += int(lift_passed)
+
+            # progress update
+            if pbar is not None:
+                sr = (count_stable / eval_count) if eval_count > 0 else 0.0
+                pbar.update(1)
+                pbar.set_postfix_str(
+                    f"succ={count_stable} fail={eval_count - count_stable} "
+                    f"skipped={skipped_count} SR={sr*100:.1f}%"
+                )
+
+        if pbar is not None:
+            # final line with totals; leave the bar collapsed
+            sr = (count_stable / eval_count) if eval_count > 0 else 0.0
+            pbar.clear()
+            pbar.close()
+            # optional: final one-liner print
+            print(
+                f"[grasp_stable_mask] evaluated={eval_count}, succ={count_stable}, "
+                f"fail={eval_count - count_stable}, skipped={skipped_count}, "
+                f"contact_fail={contact_loss_failures}, SR={sr*100:.1f}%"
+            )
+
+        stable_grasp_masks = np.array(results, dtype=bool)
+        return stable_grasp_masks
+    
     
     def grasp_stable_mask(
         self,
@@ -1017,5 +1138,8 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         env.model.geom_contype[:] = state["geom_contype"]
         env.model.geom_rgba[:] = state["geom_rgba"]
         env.model.body_gravcomp[:] = state["body_gravcomp"]
-
+        
+        if env.viewer:
+            if env.viewer.is_running():
+                env.viewer.sync() 
         return env

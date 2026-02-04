@@ -64,7 +64,8 @@ def _fmt_eta(seconds: float) -> str:
 )
 def main(cfg: DictConfig):
     # --- select object ---
-    object_id_file = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects.txt")
+    object_id_folder = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects")
+    object_id_file = os.path.join(object_id_folder, cfg.obj_file_name)
     with open(object_id_file, "r") as file:
         all_object_ids = file.read().splitlines()
         

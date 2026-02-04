@@ -17,7 +17,7 @@ import mujoco
 def scan(cfg: DictConfig, scene_def):
     gripper = get_gripper(cfg.gripper)
     assert isinstance(gripper, MjScannableGripper)
-    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)))
+    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)), headless=False)
     images, extrinsics, image_masks, segmentation_mask, segmentation_labels  = env.scan(num_images=cfg.num_images)
     intrinsics = env.get_camera_intrinsics()
     return images, extrinsics, intrinsics, image_masks, segmentation_mask, segmentation_labels
@@ -50,6 +50,14 @@ def main(cfg: DictConfig):
     # filter all scene where file name is starting with cfg.input_id
     print(cfg.input_id)
     scene_dir_list = [d for d in scene_dir_list if d.startswith(str(cfg.input_id))]
+    
+    
+    
+    # filter all scene dirs where file scene_pcd.npz already exists
+    scene_dir_list = [
+        d for d in scene_dir_list if not os.path.exists(os.path.join(input_dir_all, d, "scene_pcd.npz"))
+    ]
+    
 
     num  = len(scene_dir_list)
     count = 1
