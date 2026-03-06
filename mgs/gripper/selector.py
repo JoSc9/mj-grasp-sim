@@ -22,6 +22,7 @@ from mgs.gripper.base import MjShakableOpenCloseGripper
 from mgs.gripper.dexee import GripperDexee
 from mgs.gripper.google import GripperGoogle
 from mgs.gripper.panda import GripperPanda
+from mgs.gripper.panda_gelsight_mini import GripperPandaGelSightMini
 from mgs.gripper.robotiq2f85 import GripperRobotiq2f85
 from mgs.gripper.shadow import GripperShadowRight
 from mgs.gripper.static.allegro import StaticGripperAllegro
@@ -44,6 +45,9 @@ def get_gripper(cfg: DictConfig, default_pose=None) -> MjShakableOpenCloseGrippe
 
     if cfg.name == "PandaGripper":
         return GripperPanda(pose)
+    
+    if cfg.name == "PandaGripperGelsightMini":
+        return GripperPandaGelSightMini(pose)
 
     if cfg.name == "StaticPandaGripper":
         return StaticGripperPanda(pose)
