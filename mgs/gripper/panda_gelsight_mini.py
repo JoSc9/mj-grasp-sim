@@ -99,10 +99,9 @@ XML = """
         <geom mesh="finger_0" material="off_white" class="visual"/>
         <geom mesh="finger_1" material="black" class="visual"/>
         <geom mesh="finger_0" class="collision" name="panda_col_1" />
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" contype="0" conaffinity="0" group="1" density="0"/>
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.3" solimp="0.99 0.99 0.001" solref="0.005 1" name="col_gelsight_left"/>
+        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.3" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" name="col_gelsight_left"/>
         
-        <camera name="tactile_cam_left" pos="0 -0.0177 0.04" quat="0.707 -0.707 0 0" fovy="30" resolution="240 240"/>
+        <camera name="tactile_cam_left" pos="0 -0.005 0.04" quat="0.707 -0.707 0 0" fovy="38" resolution="240 240"/>
       </body>
       <body name="right_finger" pos="0 -0.04 0.0584" quat="0 0 0 1">
         <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
@@ -110,10 +109,9 @@ XML = """
         <geom mesh="finger_0" material="off_white" class="visual"/>
         <geom mesh="finger_1" material="black" class="visual"/>
         <geom mesh="finger_0" class="collision" name="panda_col_7" />
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" contype="0" conaffinity="0" group="1" density="0"/>
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.3" solimp="0.99 0.99 0.001" solref="0.005 1" rgba="1 0 0 0.5" name="col_gelsight_right"/>
+        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.3" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" rgba="1 0 0 0.5" name="col_gelsight_right"/>
         
-        <camera name="tactile_cam_right" pos="0 -0.0177 0.04" quat="0.707 -0.707 0 0" fovy="30" resolution="240 240"/>
+        <camera name="tactile_cam_right" pos="0 -0.005 0.04" quat="0.707 -0.707 0 0" fovy="38" resolution="240 240"/>
 
       </body>
     </body>
@@ -146,7 +144,12 @@ XML = """
 class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
     MIN_WIDTH_TARGET = 0.0  # Target closed width before clamping
     MAX_WIDTH = 0.08  # Max open width (8cm)
-    MIN_WIDTH_CLAMP = 0.003  # Minimum physical width clamp (3mm)
+    # Elastic part of gelsight mini sensor before hard stop (-> value from: https://gitlab.sdu.dk/pengu20/mj_sim/-/blob/f9336f6d4b8d44384ce7ebab3739813f66d34dfc/sensors/gelsight_mini/gelsight_mini.py)
+    ELASTOMER_THICKNESS = 0.004 
+    # Thickness of gelsight mini sensor (computed by tactile_sensing/sensor_thickness.py)
+    SENSOR_THICKNESS = 0.01824
+    # Minimum physical width clamp (Hard component of Sensor = SENSOR_THICKNESS - ELASTOMER_THICKNESS)
+    MIN_WIDTH_CLAMP = 2*(SENSOR_THICKNESS-ELASTOMER_THICKNESS)
 
     # Joint limits from XML
     Q1_RANGE = [0.0, 0.04]
@@ -224,14 +227,19 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
 
     def close_gripper(self, sim: MjSimulation):
         """Commands the gripper to its fully closed state based on original command."""
-        # Use the command known to close the gripper fully
-        target_q1 = self.Q1_RANGE[0]  # 0.0
-        target_q2 = self.Q2_RANGE[0]  # -0.04
-        sim.data.ctrl[0] = target_q1
-        sim.data.ctrl[1] = target_q2
+        # Use dynamic width computation with negative distance to ensure to return MIN_WIDTH_CLAMP
+        # If width_to_joints is called with width=0.00 -> Gripper only closes to 2*SENSOR_THICKNESS -> Object would only be touched and might slip
+        target_joints = self.width_to_joints(-1.0)
+        
+        sim.data.ctrl[0] = target_joints[0]
+        sim.data.ctrl[1] = target_joints[1]
+        # # Use the command known to close the gripper fully
+        # target_q1 = self.Q1_RANGE[0]  # 0.0
+        # target_q2 = self.Q2_RANGE[0]  # -0.04
+        # sim.data.ctrl[0] = target_q1
+        # sim.data.ctrl[1] = target_q2
 
     def width_to_joints(self, width: float):
-        SENSOR_THICKNESS = 0.0182
         adjusted_width = width + 2 * SENSOR_THICKNESS
         clamped_width = np.clip(adjusted_width, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
         target_q1 = clamped_width / 2.0
@@ -250,9 +258,13 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
         sim.data.mocap_pos[:] = np.copy(pose.pos)
         sim.data.mocap_quat[:] = np.copy(pose.quat)
 
-        # Command the fingers to close using the original known control values
-        close_ctrl_signal = np.array([0.0, -0.04])
-        sim.data.ctrl[:] = close_ctrl_signal  # Set ctrl for both actuators
+        # # Command the fingers to close using the original known control values
+        # close_ctrl_signal = np.array([0.0, -0.04])
+        # sim.data.ctrl[:] = close_ctrl_signal  # Set ctrl for both actuators
+        
+        # Close gripper to negative distance to ensure to return MIN_WIDTH_CLAMP
+        close_ctrl_signal = self.width_to_joints(-1.0)
+        sim.data.ctrl[:] = close_ctrl_signal
 
         # Step the simulation to allow the controller to close the fingers
         # Keep existing step count
@@ -285,4 +297,12 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
 
     def _clamp_width(self, width: np.array) -> float:
         """Clamps the desired width to the gripper's operational range."""
-        return np.clip(width + 0.008, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
+        
+        SENSOR_THICKNESS = 0.01824
+        
+        # Add sensor thickness of both sensors to the desired width
+        adjusted_width = width + (2 * SENSOR_THICKNESS)
+
+        # TODO: Check if an additional buffer is required -> open gripper a little bit more than necessary
+        
+        return np.clip(adjusted_width, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
