@@ -101,7 +101,7 @@ XML = """
         <geom mesh="finger_0" class="collision" name="panda_col_1" />
         <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.3" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" name="col_gelsight_left"/>
         
-        <camera name="tactile_cam_left" pos="0 -0.005 0.04" quat="0.707 -0.707 0 0" fovy="38" resolution="240 240"/>
+        <camera name="tactile_cam_left" pos="0 -0.01176 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>
       </body>
       <body name="right_finger" pos="0 -0.04 0.0584" quat="0 0 0 1">
         <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
@@ -111,7 +111,7 @@ XML = """
         <geom mesh="finger_0" class="collision" name="panda_col_7" />
         <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.3" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" rgba="1 0 0 0.5" name="col_gelsight_right"/>
         
-        <camera name="tactile_cam_right" pos="0 -0.005 0.04" quat="0.707 -0.707 0 0" fovy="38" resolution="240 240"/>
+        <camera name="tactile_cam_right" pos="0 -0.01176 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>
 
       </body>
     </body>
@@ -240,6 +240,7 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
         # sim.data.ctrl[1] = target_q2
 
     def width_to_joints(self, width: float):
+        SENSOR_THICKNESS = 0.01824
         adjusted_width = width + 2 * SENSOR_THICKNESS
         clamped_width = np.clip(adjusted_width, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
         target_q1 = clamped_width / 2.0
