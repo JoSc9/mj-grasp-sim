@@ -305,5 +305,5 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
         adjusted_width = width + (2 * SENSOR_THICKNESS)
 
         # TODO: Check if an additional buffer is required -> open gripper a little bit more than necessary
-        
-        return np.clip(adjusted_width, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
+        # Padding of 0.008 m 
+        return np.clip(adjusted_width+0.008, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
