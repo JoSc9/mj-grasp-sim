@@ -37,7 +37,7 @@ def main():
         <worldbody>
             <light pos="0 0 1"/>
             <body name="test_object" pos="0 0 0.0984">
-                <geom name="box_geom" type="sphere" size="0.005" rgba="1 0 0 1" mass="0.05" condim="6"/>
+                <geom name="box_geom" type="sphere" size="0.007" rgba="1 0 0 1" mass="0.05" condim="6"/>
             </body>
         </worldbody>
         {xml_gripper}
@@ -74,8 +74,8 @@ def main():
 
     print("[Info] Closing gripper...")
 
-    # Close gripper to 7mm width (10mm sphere - 3mm compression)
-    target_joints = gripper.width_to_joints(0.007)
+    # Close gripper
+    target_joints = gripper.width_to_joints(0.0)
     
     if model.nu >= 2:
         data.ctrl[0] = target_joints[0]
@@ -97,6 +97,21 @@ def main():
             if viewer is not None and viewer.is_running():
                 viewer.sync()
             
+            current_q1 = data.qpos[id_joint1]
+            print(f"Step {i}: Joint position finger 1 = {current_q1.item():.6f}")
+
+            total_force = 0
+            for n in range(data.ncon):
+                contact = data.contact[n]
+                # Check if collision with hard_stop_left or hard_stop_right occurs
+                geom1_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom1)
+                geom2_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom2)
+                
+                if "hard_stop" in str(geom1_name) or "hard_stop" in str(geom2_name):
+                    # Calculate penetration depth of hard_stop box
+                    print(f"Hard stop reached. Penetration depth: {contact.dist:.6f}")
+
+
             # Render camera image
             if i % render_interval == 0:
                 tactile_img_rgb = left_sensor.tactile_image
