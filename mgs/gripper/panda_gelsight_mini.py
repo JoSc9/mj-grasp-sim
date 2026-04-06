@@ -124,14 +124,6 @@ XML = """
     <exclude body1="hand" body2="right_finger"/>
   </contact>
 
-
-  <tendon>
-    <fixed name="split">
-      <joint joint="finger_joint1" coef="0.5"/>
-      <joint joint="finger_joint2" coef="0.5"/>
-    </fixed>
-  </tendon>
-
   <equality>
     <weld body1="mocap" body2="hand"/>
   </equality>
