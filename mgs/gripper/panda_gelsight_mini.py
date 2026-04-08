@@ -129,8 +129,8 @@ XML = """
   </equality>
 
   <actuator>
-    <position ctrllimited="true" ctrlrange="0.0 0.04" joint="finger_joint1" kp="1000" name="gripper_finger_joint1" forcelimited="true" forcerange="-15 15"/>
-    <position ctrllimited="true" ctrlrange="-0.04 0.0" joint="finger_joint2" kp="1000" name="gripper_finger_joint2" forcelimited="true" forcerange="-15 15"/>
+    <position ctrllimited="true" ctrlrange="0.0 0.04" joint="finger_joint1" kp="1000" name="gripper_finger_joint1" forcelimited="true" forcerange="-5 5"/>
+    <position ctrllimited="true" ctrlrange="-0.04 0.0" joint="finger_joint2" kp="1000" name="gripper_finger_joint2" forcelimited="true" forcerange="-5 5"/>
   </actuator>
 """
 

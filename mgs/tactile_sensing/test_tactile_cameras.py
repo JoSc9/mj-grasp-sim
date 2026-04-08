@@ -100,6 +100,10 @@ def main():
             current_q1 = data.qpos[id_joint1]
             print(f"Step {i}: Joint position finger 1 = {current_q1.item():.6f}")
 
+            force_left = data.actuator_force[0]
+            force_right = data.actuator_force[1]
+            print(f"Step{i}: Motor Force Left = {force_left:.4f} N | Right = {force_right:.4f} N")
+
             total_force = 0
             for n in range(data.ncon):
                 contact = data.contact[n]
