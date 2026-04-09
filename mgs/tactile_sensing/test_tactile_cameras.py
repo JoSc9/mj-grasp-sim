@@ -64,8 +64,11 @@ def main():
     # Reset data
     mujoco.mj_resetData(model, data)
 
+    # Get IDs
     id_joint1 = model.joint("finger_joint1").qposadr
     id_joint2 = model.joint("finger_joint2").qposadr
+    id_shell_left = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "col_gelsight_left")
+    id_shell_right = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "col_gelsight_left")
 
     # Open gripper
     data.qpos[id_joint1] = 0.04
@@ -118,7 +121,32 @@ def main():
 
             # Render camera image
             if i % render_interval == 0:
+
+                # =====================================================================
+                # WORKAROUND: "Blink" the sensor shell for tactile rendering
+                # =====================================================================
+                # Problem: The tactile camera's FOV intersects the internal plastic shell.
+                # The gelsight_mini algorithm misinterprets these static walls as massive 
+                # gel deformations, resulting in severe noise and rendering artifacts.
+                #
+                # Solution: Temporarily make the shell visually transparent (alpha = 0.0) 
+                # right before the camera captures the depth frame, and immediately 
+                # restore it (alpha = 1.0) afterwards. 
+                #
+                # Note: Since the main MuJoCo viewer (viewer.sync) is updated elsewhere 
+                # in the loop, this microsecond "blink" is completely invisible to the 
+                # user, preserving the visual integrity of the simulation.
+
+                # Disable shell visualisation to get 
+                model.geom_rgba[id_shell_left][3] = 0.0  
+                model.geom_rgba[id_shell_right][3] = 0.0
+
                 tactile_img_rgb = left_sensor.tactile_image
+
+                # Enable shell visualisation to get 
+                model.geom_rgba[id_shell_left][3] = 1.0  
+                model.geom_rgba[id_shell_right][3] = 1.0
+
                 if tactile_img_rgb is not None:
                     # Convert for OpenCV
                     tactile_img_bgr = cv2.cvtColor(tactile_img_rgb.astype(np.float32), cv2.COLOR_RGB2BGR)

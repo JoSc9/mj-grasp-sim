@@ -54,7 +54,7 @@ class GelSightMini(Camera):
 
         # constants from: https://github.com/danfergo/gelsight_simulation/tree/master
         self._min_depth = (
-            0.026  # distance from the image sensor to the rigid glass outer surface
+            0.01425  # distance from the image sensor to the rigid glass outer surface
         )
         self._ELASTOMER_THICKNESS = 0.004  # m
         self._kernel_1_sigma = 7
