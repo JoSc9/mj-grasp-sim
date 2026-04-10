@@ -25,6 +25,7 @@ from mgs.obj.base import CollisionMeshObject
 from mgs.obj.cube import ObjectCube
 from mgs.obj.gso import ObjectGSO
 from mgs.obj.ycb import ObjectYCB
+from mgs.obj.angle_grinder import ObjectAngleGrinder
 from mgs.util.const import GIT_PATH
 from mgs.util.file import generate_unique_hash
 from mgs.util.geo.transforms import SE3Pose
@@ -33,7 +34,8 @@ from mgs.util.geo.transforms import SE3Pose
 def get_object(id: int) -> CollisionMeshObject:
     ycb_obj_ids = [o for o in ObjectYCB.all_object_ids() if o == id]
     gso_obj_ids = [o for o in ObjectGSO.all_object_ids() if o == id]
-    assert len(ycb_obj_ids) + len(gso_obj_ids) == 1
+    angle_grinder_ids = ["angle_grinder"] if "angle_grinder" == id else []   
+    assert len(ycb_obj_ids) + len(gso_obj_ids) + len(angle_grinder_ids) == 1
     if len(gso_obj_ids) == 1:
         hash_name = generate_unique_hash()
         return ObjectGSO(
@@ -48,6 +50,12 @@ def get_object(id: int) -> CollisionMeshObject:
             object_id=ycb_obj_ids[0],
             name=hash_name,
         )
+    if len(angle_grinder_ids) == 1:
+        hash_name = generate_unique_hash()
+        return ObjectAngleGrinder(
+            SE3Pose(np.array([0, 0, 0]), np.array([1, 0, 0, 0]), type="wxyz"),
+            name=hash_name,
+        )
     raise ValueError("Object not found")
 
 
@@ -57,7 +65,16 @@ def get_objects(cfg: DictConfig) -> List[CollisionMeshObject]:
     if cfg.name == "SingleObject":
         ycb_obj_ids = [o for o in ObjectYCB.all_object_ids() if o == cfg.id]
         gso_obj_ids = [o for o in ObjectGSO.all_object_ids() if o == cfg.id]
-        assert len(ycb_obj_ids) + len(gso_obj_ids) == 1
+        angle_grinder_ids = ["angle_grinder"] if cfg.id == "angle_grinder" else []  
+        assert len(ycb_obj_ids) + len(gso_obj_ids) + len(angle_grinder_ids) == 1
+        if len(angle_grinder_ids) == 1:
+            hash_name = generate_unique_hash()
+            object_list.append(
+                ObjectAngleGrinder(
+                    SE3Pose(np.array([0, 0, 0]), np.array([1, 0, 0, 0]), type="wxyz"),
+                    name=hash_name,
+                )
+            )
         if len(gso_obj_ids) == 1:
             hash_name = generate_unique_hash()
             object_list.append(
@@ -183,10 +200,22 @@ def get_objects(cfg: DictConfig) -> List[CollisionMeshObject]:
     elif cfg.name == "ObjectList":
         import random
 
-        ycb_obj_ids = [("ycb", o) for o in ObjectYCB.all_object_ids() if o in cfg.ids]
-        gso_obj_ids = [("gso", o) for o in ObjectGSO.all_object_ids() if o in cfg.ids]
+        # Ensure cfg.ids is treated as a list for exact matching
+        if isinstance(cfg.ids, str):
+            ids_list = [cfg.ids]
+        else:
+            ids_list = cfg.ids
 
-        obj_ids = ycb_obj_ids + gso_obj_ids
+        ycb_obj_ids = [("ycb", o) for o in ObjectYCB.all_object_ids() if o in ids_list]
+        gso_obj_ids = [("gso", o) for o in ObjectGSO.all_object_ids() if o in ids_list]
+        angle_grinder_ids = [("angle_grinder", "angle_grinder")]  if "angle_grinder" in ids_list else [] 
+
+        obj_ids = ycb_obj_ids + gso_obj_ids + angle_grinder_ids
+
+        # If parent config specifies num_objects, respect that limit
+        if hasattr(cfg, 'num_objects') and cfg.num_objects is not None:
+            if len(obj_ids) > cfg.num_objects:
+                raise ValueError(f"more than {cfg.num_objects} objecs selected.")
 
         x, y = -8.5, -8
         for i, tagged_obj in enumerate(obj_ids):
@@ -219,6 +248,13 @@ def get_objects(cfg: DictConfig) -> List[CollisionMeshObject]:
                             type="wxyz",
                         ),
                         object_id=obj,
+                        name=hash_name,
+                    )
+                )
+            elif tag == "angle_grinder":
+                object_list.append(
+                    ObjectAngleGrinder(
+                        SE3Pose(np.array([0, 0, 0]), np.array([1, 0, 0, 0]), type="wxyz"),
                         name=hash_name,
                     )
                 )

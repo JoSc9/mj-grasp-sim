@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TRAIN_OBJ_FILE="$PROJECT_ROOT/asset/mj-objects/train_obj.txt"
+TRAIN_OBJ_FILE="$PROJECT_ROOT/asset/mj-objects/obj_unsymmetric_test.txt"
 NUM_CPUS="${1:-80}"
 
 # Check if train_obj.txt exists
@@ -53,7 +53,7 @@ worker_process() {
         fi
         
         # Read object ID at current index (1-based for sed)
-        object_id=$(sed -n "$((CURRENT_INDEX + 1))p" "$QUEUE_FILE")
+        object_id=$(sed -n "$((CURRENT_INDEX + 1))p" "$QUEUE_FILE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         
         # Increment index for next worker
         echo "$((CURRENT_INDEX + 1))" > "$INDEX_FILE"
@@ -75,8 +75,15 @@ worker_process() {
             echo "[Worker $worker_id] Scene $i/5 for $object_id"
             
             # Capture output and check for exceptions
-            output=$(python -m mgs.cli.gen_scene object.ids="$object_id" 2>&1)
+            set +e
+            output=$(cd "$PROJECT_ROOT" && python -m mgs.cli.gen_scene object.ids=$object_id 2>&1)
             exit_code=$?
+            set -e
+            
+            # Debug: print output and exit code
+            echo "[Worker $worker_id] Exit code: $exit_code"
+            echo "[Worker $worker_id] Output:" 
+            echo "$output" | head -5
             
             # Check if command failed (non-zero exit) or output contains error/exception messages
             if [[ $exit_code -ne 0 ]] || echo "$output" | grep -qiE "(exception|error|Not enough collision free grasps)"; then

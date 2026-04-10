@@ -2,11 +2,13 @@ defaults:
   - _self_
   - gripper: panda
 
+obj_file_name: fast_eta_objects.txt
+
 max_rounds: 100
 
 name: Fast_Data_Subset
 # num target grasps to compute (will be checked in beginning)-> if enough exit
-target_grasps: 2000
+target_grasps: 5000
 
 # collect grasps on sampling
 sample_grasps: 1000

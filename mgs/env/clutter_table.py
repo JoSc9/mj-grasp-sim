@@ -16,7 +16,7 @@
 
 import random
 from copy import deepcopy
-from typing import List, TypedDict
+from typing import Dict, List, TypedDict
 
 import mujoco
 import numpy as np
@@ -209,7 +209,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
 
         return max_delta < 5e-3
 
-    def gen_clutter(self):
+    def gen_clutter(self) -> Dict[str, SE3Pose]:
         def random_pose():
             scipy_random_quat = Rotation.random().as_quat()  # type: ignore
             mujoco_random_quat = quat_xyzw_to_wxyz(scipy_random_quat)
@@ -245,6 +245,13 @@ class ClutterTableEnv(MjScanEnv, Loadable):
             if self.viewer:
                 if self.viewer.is_running():
                     self.viewer.sync()
+                    
+        # Capture final poses after settling
+        final_poses = {}
+        for obj_name in self.object_names:
+            final_poses[obj_name] = self.get_obj_pose(obj_name)
+            
+        return final_poses
 
     def update_camera_settings(self, num_images, i):
         rnd_pos = fibonacci_sphere(total_num=num_images, i=i) * 0.75

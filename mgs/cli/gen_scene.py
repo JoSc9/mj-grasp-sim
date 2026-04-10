@@ -156,6 +156,7 @@ def fps_rank_grasps(
 def get_grasps(gripper_name, obj_id):
     grasp_dir = os.path.join(  # type: ignore
         os.getenv("MGS_INPUT_DIR"),  # type: ignore
+        
         gripper_name,
         obj_id,
     )
@@ -185,6 +186,11 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         obj_list = get_objects(cfg.object)
+        
+        # If num_objects is specified and less than available objects, randomly select
+        if hasattr(cfg, 'num_objects') and cfg.num_objects is not None and cfg.num_objects < len(obj_list):
+            raise ValueError(f"more than {cfg.num_objects} objecs selected.")
+            
         gripper = get_gripper(
             cfg.gripper,
             default_pose=SE3Pose(
@@ -192,8 +198,14 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
             ),
         )
         env = get_env(cfg.env, gripper=deepcopy(gripper), obj_list=deepcopy(obj_list), headless=True)
-        env.gen_clutter()
+        obj_poses = env.gen_clutter()
         scene_dict = env.to_dict()
+        
+        # Convert SE3Pose objects to matrices for serialization
+        obj_poses_matrices = {}
+        for obj_name, pose in obj_poses.items():
+            obj_poses_matrices[obj_name] = pose.to_mat()
+        scene_dict["obj_poses"] = obj_poses_matrices
 
         exclude_scene = False
         for obj_name in getattr(env, "object_names", []):
@@ -276,7 +288,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
         with_padding=0.002,
     )
 
-    if sum(collision_free_mask) <= 0:
+    if sum(collision_free_mask) <= 100:
         raise ValueError(
             f"Not enough collision free grasps! Only: {sum(collision_free_mask)}"
         )
@@ -421,7 +433,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
 def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
     #input_dir = os.getenv("MGS_INPUT_DIR")
     
-    output_dir = "/home/ws/data/outputs/new_scenes" 
+    output_dir = "/home/ws/data/outputs/test_assymetric_ood_objects" 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     input_dir = os.path.join(repo_root, "outputs")
     assert output_dir is not None, "No output_dir defined!"
@@ -429,66 +441,67 @@ def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
 
     # Ensure helpers that call os.getenv("MGS_INPUT_DIR") / MGS_OUTPUT_DIR
     # receive valid paths (prevents passing None into os.path.join).
-    os.environ.setdefault("MGS_INPUT_DIR", input_dir)
+    os.environ["MGS_INPUT_DIR"] = input_dir
     # set base output dir (before adding gripper/hash suffix)
-    os.environ.setdefault("MGS_OUTPUT_DIR", output_dir)
-
+    os.environ["MGS_OUTPUT_DIR"] = output_dir
+    
+    #try:
+    scene_dict = gen_stable_scene(cfg)
+    valid_grasps, invalid_grasps, failed_grasps = filter_grasps(cfg, scene_dict)
+    
     output_dir = os.path.join(
         output_dir,
         cfg.gripper.name,
-        generate_unique_hash(16),
+        generate_unique_hash(16) + "_" + valid_grasps[0]["object_id"],
     )
 
-    try:
-        scene_dict = gen_stable_scene(cfg)
-        valid_grasps, invalid_grasps, failed_grasps = filter_grasps(cfg, scene_dict)
-        scene_path = os.path.join(output_dir, "scene")
-        os.makedirs(output_dir, exist_ok=True)
+    scene_path = os.path.join(output_dir, "scene")
+    os.makedirs(output_dir, exist_ok=True)
+    np.savez(
+        scene_path,
+        **{
+            "scene_definition": scene_dict,
+        },
+    )
+    for grasps in valid_grasps:
+        obj_id, obj_name = grasps["object_id"], grasps["object_name"]
+        object_path = os.path.join(output_dir, obj_id + "_" + obj_name)
         np.savez(
-            scene_path,
+            object_path,
             **{
-                "scene_definition": scene_dict,
+                "pose": grasps["pose"],
+                "joints": grasps["joints"],
             },
         )
-        for grasps in valid_grasps:
-            obj_id, obj_name = grasps["object_id"], grasps["object_name"]
-            object_path = os.path.join(output_dir, obj_id + "_" + obj_name)
-            np.savez(
-                object_path,
-                **{
-                    "pose": grasps["pose"],
-                    "joints": grasps["joints"],
-                },
-            )
-        for grasps in invalid_grasps:
-            obj_id, obj_name = grasps["object_id"], grasps["object_name"]
-            object_path = os.path.join(
-                output_dir, obj_id + "_" + obj_name + "_" + "collision"
-            )
-            np.savez(
-                object_path,
-                **{
-                    "pose": grasps["pose"],
-                    "joints": grasps["joints"],
-                },
-            )
-        for grasps in failed_grasps:
-            obj_id, obj_name = grasps["object_id"], grasps["object_name"]
-            object_path = os.path.join(
-                output_dir, obj_id + "_" + obj_name + "_" + "failed"
-            )
-            np.savez(
-                object_path,
-                **{
-                    "pose": grasps["pose"],
-                    "joints": grasps["joints"],
-                },
-            )
+    for grasps in invalid_grasps:
+        obj_id, obj_name = grasps["object_id"], grasps["object_name"]
+        object_path = os.path.join(
+            output_dir, obj_id + "_" + obj_name + "_" + "collision"
+        )
+        np.savez(
+            object_path,
+            **{
+                "pose": grasps["pose"],
+                "joints": grasps["joints"],
+            },
+        )
+    for grasps in failed_grasps:
+        obj_id, obj_name = grasps["object_id"], grasps["object_name"]
+        object_path = os.path.join(
+            output_dir, obj_id + "_" + obj_name + "_" + "failed"
+        )
+        np.savez(
+            object_path,
+            **{
+                "pose": grasps["pose"],
+                "joints": grasps["joints"],
+            },
+        )
             
-        print(f"Scene and grasps saved to: {output_dir}")
+    print(f"Scene and grasps saved to: {output_dir}")
 
-    except Exception as e:
-        print(e)
+    #except Exception as e:
+    #    print(e)
 
 
 if __name__ == "__main__":
