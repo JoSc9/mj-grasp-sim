@@ -105,7 +105,7 @@ def main(cfg: DictConfig):
 
         print(f"Grasps to generate (target minus existing): {grasps_to_generate}")
 
-        env = GravitylessObjectGrasping(gripper, obj)
+        env = GravitylessObjectGrasping(gripper, obj, render=False)
 
         # rolling buffers
         buf_poses, buf_joints = [], []

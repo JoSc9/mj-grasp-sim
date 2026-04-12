@@ -1,6 +1,7 @@
 from typing import List, Tuple
 
 import mujoco
+import mujoco.viewer
 import numpy as np
 from tqdm import tqdm
 
@@ -33,7 +34,7 @@ XML = r"""
 
 
 class GravitylessObjectGrasping(MjSimulation):
-    def __init__(self, gripper: MjShakableOpenCloseGripper, obj: CollisionMeshObject):
+    def __init__(self, gripper: MjShakableOpenCloseGripper, obj: CollisionMeshObject, render: bool = False):
         self.gripper = gripper
         self.obj = obj
         self.gripper_xml, self.gripper_assets = gripper.to_xml()
@@ -46,7 +47,11 @@ class GravitylessObjectGrasping(MjSimulation):
             self.model_xml, {**self.gripper_assets, **self.object_assets}
         )
         self.data = mujoco.MjData(self.model)  # type: ignore
-        mujoco.mj_forward(self.model, self.data)  # type: ignore
+        mujoco.mj_forward(self.model, self.data)  # type: 
+        
+        self.viewer = None
+        if render:
+            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
 
     def idle_grasp(self, pose: SE3Pose, joints: np.ndarray):
         import mujoco.viewer
@@ -196,6 +201,10 @@ class GravitylessObjectGrasping(MjSimulation):
 
                 self.gripper.close_gripper_at(self, pose_processed)
 
+                if self.viewer is not None:
+                # Visualize closed state
+                    self.viewer.sync()
+
                 if not self.check_contact_with_object():
                     results.append(False)
                     continue
@@ -229,6 +238,10 @@ class GravitylessObjectGrasping(MjSimulation):
                         mujoco.mj_step(
                             self.model, self.data, nstep=1
                         )  # integrates one step
+                        
+                        if self.viewer is not None:
+                            self.viewer.sync()
+                        
                         self.data.xfrc_applied[object_bid, :] = (
                             0.0  # clear so it doesn't persist
                         )
@@ -238,6 +251,9 @@ class GravitylessObjectGrasping(MjSimulation):
 
                     mujoco.mj_step(self.model, self.data, nstep=500)
 
+                    if self.viewer is not None:
+                        self.viewer.sync()
+                    
                     # check contact right after the kick
                     if not self.check_contact_with_object():
                         all_pass = False
