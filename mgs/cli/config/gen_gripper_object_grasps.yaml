@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - gripper: panda
+  - gripper: panda_gelsight_mini
 
 max_rounds: 100
 
