@@ -99,7 +99,7 @@ XML = """
         <geom mesh="finger_0" material="off_white" class="visual"/>
         <geom mesh="finger_1" material="black" class="visual"/>
         <geom mesh="finger_0" class="collision" name="panda_col_1" />
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" rgba="1 1 1 0.3" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" name="col_gelsight_left"/>
+        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" rgba="1 1 1 0.3" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" name="col_gelsight_left" group="4"/>
         <geom type="box" size="0.01 0.001 0.01" pos="0 -0.01325 0.04" priority="1" rgba="0 0 1 0" contype="1" conaffinity="1" name="hard_stop_left" solimp="0.99 0.99 0.001" solref="0.001 1" condim="3"/>
 
         <camera name="tactile_cam_left" pos="0 0 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>
@@ -110,7 +110,7 @@ XML = """
         <geom mesh="finger_0" material="off_white" class="visual"/>
         <geom mesh="finger_1" material="black" class="visual"/>
         <geom mesh="finger_0" class="collision" name="panda_col_7" />
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" rgba="1 0 0 0.5" name="col_gelsight_right"/>
+        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" rgba="1 0 0 0.5" name="col_gelsight_right" group="4"/>
         <geom type="box" size="0.01 0.001 0.01" pos="0 -0.01324 0.04" priority="1" rgba="0 1 0 0" contype="1" conaffinity="1" name="hard_stop_right" solimp="0.99 0.99 0.001" solref="0.001 1" condim="3"/>
 
         <camera name="tactile_cam_right" pos="0 0 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>

@@ -119,6 +119,8 @@ def main():
     viewer = None
     if USE_MUJOCO_VIEWER:
         viewer = mujoco.viewer.launch_passive(model, data)
+        # Activate render-group 4 to visualize the gelsight mini shell
+        viewer.opt.geomgroup[4] = 1 
 
     try:
         for i in range(steps):
@@ -148,30 +150,7 @@ def main():
             # Render camera image
             if i % render_interval == 0:
 
-                # =====================================================================
-                # WORKAROUND: "Blink" the sensor shell for tactile rendering
-                # =====================================================================
-                # Problem: The tactile camera's FOV intersects the internal plastic shell.
-                # The gelsight_mini algorithm misinterprets these static walls as massive 
-                # gel deformations, resulting in severe noise and rendering artifacts.
-                #
-                # Solution: Temporarily make the shell visually transparent (alpha = 0.0) 
-                # right before the camera captures the depth frame, and immediately 
-                # restore it (alpha = 1.0) afterwards. 
-                #
-                # Note: Since the main MuJoCo viewer (viewer.sync) is updated elsewhere 
-                # in the loop, this microsecond "blink" is completely invisible to the 
-                # user, preserving the visual integrity of the simulation.
-
-                # Disable shell visualisation to get 
-                model.geom_rgba[id_shell_left][3] = 0.0  
-                model.geom_rgba[id_shell_right][3] = 0.0
-
                 tactile_img_rgb = left_sensor.tactile_image
-
-                # # Enable shell visualisation to get 
-                model.geom_rgba[id_shell_left][3] = 1.0  
-                model.geom_rgba[id_shell_right][3] = 1.0
 
                 if tactile_img_rgb is not None:
                     # Convert for OpenCV
@@ -187,7 +166,7 @@ def main():
                     if key == ord('q'):
                         print("[Info] Stream stopped manually.")
                         break
-                    elif key == ord('p'):
+                    elif key == ord('s'):
                         # Snapshot: Pauses the simulation and renders current point cloud
                         print("[Info] Take snapshot")
                         visualize_tactile_pointcloud(
