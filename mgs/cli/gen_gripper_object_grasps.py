@@ -101,7 +101,7 @@ def main(cfg: DictConfig):
         grasps_to_generate = target - num_total_grasps
         if grasps_to_generate <= 0:
             print("Nothing to do — target already met.")
-            return
+            continue
 
         print(f"Grasps to generate (target minus existing): {grasps_to_generate}")
 
