@@ -206,8 +206,13 @@ class GravitylessObjectGrasping(MjSimulation):
                     self.viewer.sync()
 
                 if not self.check_contact_with_object():
+                    print(f"\[Info] Grasp {i}: Already failed while closing the gripper." )
                     results.append(False)
                     continue
+
+                if self.viewer is not None:
+                    print(f"\n[Info] Grasp {i}: Object grabbed. Press ENTER in Terminal to perform the 6 kicks")
+                    input()
 
                 # snapshot the post-close state for deterministic, repeatable kicks
                 closed_state = self.get_state()
@@ -225,13 +230,17 @@ class GravitylessObjectGrasping(MjSimulation):
                     axis=1,
                 ).T  # -x,-y,-z
                 # dirs_world: shape (6, 3)
+                dir_names =["+X", "+Y", "+Z", "-X", "-Y", "-Z"] 
 
                 all_pass = True
-                for d in dirs_world:
+                for idx, d in enumerate(dirs_world):
                     # restore saved state
                     self.set_state(closed_state)
                     mujoco.mj_forward(self.model, self.data)
 
+                    if self.viewer is not None:
+                        print(f"Test direction {dir_names[idx]}")
+                        
                     F = IMPULSE_FORCE_N * d
                     for i in range(5):
                         self.data.xfrc_applied[object_bid, :3] += F
@@ -251,13 +260,19 @@ class GravitylessObjectGrasping(MjSimulation):
 
                     mujoco.mj_step(self.model, self.data, nstep=500)
 
+                    #Update viewer to see the kick result
                     if self.viewer is not None:
                         self.viewer.sync()
                     
                     # check contact right after the kick
                     if not self.check_contact_with_object():
+                        if self.viewer is not None:
+                            print(f"Kick failed in {dir_names[idx]} direction")
                         all_pass = False
                         break
+                    else:
+                        if self.viewer is not None:
+                            print(f"Kick stable in {dir_names[idx]} direction")
 
                 results.append(all_pass)
 
