@@ -4,6 +4,7 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 from omegaconf import OmegaConf
+import open3d as o3d
 
 from mgs.gripper.selector import get_gripper
 from mgs.sensors.gelsight_mini.gelsight_mini import GelSightMini
@@ -17,6 +18,31 @@ class DummyArgs:
     cam_height = 480      
 
 dummy_args = DummyArgs()
+
+def visualize_tactile_pointcloud(depth_map: np.ndarray, px2m_ratio: float, max_depth: float):
+    print("[Info] Calculate point cloud...")
+    h, w = depth_map.shape
+    x = np.linspace(0, w * px2m_ratio, w)
+    y = np.linspace(0, h * px2m_ratio, h)
+    xv, yv = np.meshgrid(x, y)
+    
+    points = np.stack((xv.flatten(), yv.flatten(), depth_map.flatten()), axis=-1)
+    
+    # Filter not_in_touch area
+    mask = points[:, 2] < (max_depth - 0.0001)
+    filtered_points = points[mask]
+    
+    if len(filtered_points) == 0:
+        print("[Info] Kein Kontakt - Punktwolke ist leer.")
+        return
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(filtered_points)
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.001, max_nn=30))
+    pcd.orient_normals_towards_camera_location(camera_location=np.array([0., 0., 0.]))
+    
+    print("[Info] Öffne 3D Viewer. Schließe das Fenster, um die Simulation fortzusetzen/zu beenden.")
+    o3d.visualization.draw_geometries([pcd])
 
 def main():
     print("[Info] Setting up the simulation environment...")
@@ -143,7 +169,7 @@ def main():
 
                 tactile_img_rgb = left_sensor.tactile_image
 
-                # Enable shell visualisation to get 
+                # # Enable shell visualisation to get 
                 model.geom_rgba[id_shell_left][3] = 1.0  
                 model.geom_rgba[id_shell_right][3] = 1.0
 
@@ -156,15 +182,35 @@ def main():
                     # Update tactile image
                     cv2.imshow("Live Tactile Image - Left Finger", tactile_img_bgr)
 
-                    # Stop stream if 'q' is pressed
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                    key = cv2.waitKey(1) & 0xFF
+                    
+                    if key == ord('q'):
                         print("[Info] Stream stopped manually.")
                         break
+                    elif key == ord('p'):
+                        # Snapshot: Pauses the simulation and renders current point cloud
+                        print("[Info] Take snapshot")
+                        visualize_tactile_pointcloud(
+                            depth_map=left_sensor._generate_gelsight_img(left_sensor.depth_image, return_depth=True)[1],
+                            px2m_ratio=left_sensor._px2m_ratio,
+                            max_depth=left_sensor._max_depth
+                        )
 
-        print("[Info] Simulation finished. Press Enter in terminal to close all windows...")
+        print("[Info] Simulation finished. Generate final pointcloud")
+        
+        # Render final point cloud
+        _, final_elastomer_depth = left_sensor._generate_gelsight_img(left_sensor.depth_image, return_depth=True)
+        visualize_tactile_pointcloud(
+            depth_map=final_elastomer_depth,
+            px2m_ratio=left_sensor._px2m_ratio,
+            max_depth=left_sensor._max_depth
+        )
+
+        print("[Info] Press Enter in terminal to close all windows...")
         input()
+        
     finally:
-        # Close all windwos
+        # Close all windows
         cv2.destroyAllWindows()
         if viewer is not None:
             viewer.close()
