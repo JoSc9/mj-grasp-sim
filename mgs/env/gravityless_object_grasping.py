@@ -52,6 +52,8 @@ class GravitylessObjectGrasping(MjSimulation):
         self.viewer = None
         if render:
             self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            # Activate group 4 to visualize gelsight mini shell
+            self.viewer.opt.geomgroup[4] = 1 
 
     def idle_grasp(self, pose: SE3Pose, joints: np.ndarray):
         import mujoco.viewer
