@@ -33,7 +33,7 @@ def visualize_tactile_pointcloud(depth_map: np.ndarray, px2m_ratio: float, max_d
     filtered_points = points[mask]
     
     if len(filtered_points) == 0:
-        print("[Info] Kein Kontakt - Punktwolke ist leer.")
+        print("[Info] No contact - point cloud is empty.")
         return
 
     pcd = o3d.geometry.PointCloud()
@@ -43,6 +43,34 @@ def visualize_tactile_pointcloud(depth_map: np.ndarray, px2m_ratio: float, max_d
     
     print("[Info] Öffne 3D Viewer. Schließe das Fenster, um die Simulation fortzusetzen/zu beenden.")
     o3d.visualization.draw_geometries([pcd])
+
+def show_raw_pointcloud(data, depth_renderer, u, v, cx, cy, f):
+    """
+    - Renders the raw depth map
+    - Converts it into a 3D point cloud
+    - Opens an interactive Open3D window
+    """
+    # Update and extract depth map
+    depth_renderer.update_scene(data, camera="tactile_cam_left")
+    raw_depth = depth_renderer.render().flatten()
+
+    # Filter valid points (Z values greater than 0 and less than 28,25 mm)
+    valid = (raw_depth > 0) & (raw_depth < 0.02825)
+    Z = raw_depth[valid]
+
+    # Convert 2D pixels to 3D coordinates (pinhole camera model)
+    X = (u[valid] - cx) * Z / f
+    Y = (v[valid] - cy) * Z / f
+    
+    points = np.column_stack((X, Y, Z))
+    
+    if len(points) > 0:
+        print("\n[Info] 3D view opened. Close the Open3D window to continue the simulation...")
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        o3d.visualization.draw_geometries([pcd], window_name="MuJoCo Raw Point Cloud", width=800, height=600)
+    else:
+        print("\n[Info] No contact points in field of view (Z < 28,25 mm).")
 
 def main():
     print("[Info] Setting up the simulation environment...")
@@ -83,6 +111,12 @@ def main():
             data=data, 
             cam_name="tactile_cam_left"
         )
+        right_sensor = GelSightMini(
+            args=DummyArgs,
+            model=model,
+            data=data,
+            cam_name="tactile_cam_right"
+        )
     except Exception as e:
         print(f"[Error] GelSight init failed. Error: {e}")
         return
@@ -93,8 +127,23 @@ def main():
     # Get IDs
     id_joint1 = model.joint("finger_joint1").qposadr
     id_joint2 = model.joint("finger_joint2").qposadr
-    id_shell_left = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "col_gelsight_left")
-    id_shell_right = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "col_gelsight_left")
+    cam_id_left = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "tactile_cam_left")
+    cam_id_right = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "tactile_cam_right")
+
+    # Create renderer for raw depth map
+    depth_renderer = mujoco.Renderer(model, dummy_args.cam_height, dummy_args.cam_width)
+    depth_renderer.enable_depth_rendering()
+
+    # Intrinsic cam parameter for 3D reconstruction 
+    fovy = model.cam_fovy[cam_id_left]
+    f = 0.5 * dummy_args.cam_height / np.tan(fovy * np.pi / 360) 
+    cx = dummy_args.cam_width / 2.0
+    cy = dummy_args.cam_height / 2.0
+
+    # Calculate pixel-coords (u, v) for img in advance 
+    u, v = np.meshgrid(np.arange(dummy_args.cam_width), np.arange(dummy_args.cam_height))
+    u = u.flatten()
+    v = v.flatten()
 
     # Open gripper
     data.qpos[id_joint1] = 0.04
@@ -121,6 +170,12 @@ def main():
         viewer = mujoco.viewer.launch_passive(model, data)
         # Activate render-group 4 to visualize the gelsight mini shell
         viewer.opt.geomgroup[4] = 1 
+
+    print("\n=======================================================")
+    print("CONTROLS IN OPENCV WINDOW (Live Tactile Image):")
+    print(" [ s ] - Pause simulation & inspect 3D point cloud")
+    print(" [ q ] - Stop simulation early")
+    print("=======================================================\n")
 
     try:
         for i in range(steps):
@@ -150,16 +205,22 @@ def main():
             # Render camera image
             if i % render_interval == 0:
 
-                tactile_img_rgb = left_sensor.tactile_image
+                tactile_img_rgb_l = left_sensor.tactile_image
+                tactile_img_rgb_r = right_sensor.tactile_image
 
-                if tactile_img_rgb is not None:
+                if tactile_img_rgb_l & tactile_img_rgb_r is not None:
                     # Convert for OpenCV
-                    tactile_img_bgr = cv2.cvtColor(tactile_img_rgb.astype(np.float32), cv2.COLOR_RGB2BGR)
-                    tactile_img_bgr = cv2.normalize(tactile_img_bgr, None, 0, 255, cv2.NORM_MINMAX)
-                    tactile_img_bgr = np.uint8(tactile_img_bgr)
+                    tactile_img_bgr_l = cv2.cvtColor(tactile_img_rgb_l.astype(np.float32), cv2.COLOR_RGB2BGR)
+                    tactile_img_bgr_l = cv2.normalize(tactile_img_bgr_l, None, 0, 255, cv2.NORM_MINMAX)
+                    tactile_img_bgr_l = np.uint8(tactile_img_bgr_l)
+
+                    tactile_img_bgr_r = cv2.cvtColor(tactile_img_rgb_r.astype(np.float32), cv2.COLOR_RGB2BGR)
+                    tactile_img_bgr_r = cv2.normalize(tactile_img_bgr_r, None, 0, 255, cv2.NORM_MINMAX)
+                    tactile_img_bgr_r = np.uint8(tactile_img_bgr_r)
 
                     # Update tactile image
-                    cv2.imshow("Live Tactile Image - Left Finger", tactile_img_bgr)
+                    cv2.imshow("Live Tactile Image - Left Finger", tactile_img_bgr_l)
+                    cv2.imshow("Live Tactile Image - Right Finger", tactile_img_bgr_r)
 
                     key = cv2.waitKey(1) & 0xFF
                     
@@ -174,6 +235,7 @@ def main():
                             px2m_ratio=left_sensor._px2m_ratio,
                             max_depth=left_sensor._max_depth
                         )
+                        show_raw_pointcloud(data, depth_renderer, u, v, cx, cy, f)
 
         print("[Info] Simulation finished. Generate final pointcloud")
         
@@ -184,6 +246,7 @@ def main():
             px2m_ratio=left_sensor._px2m_ratio,
             max_depth=left_sensor._max_depth
         )
+        show_raw_pointcloud(data, depth_renderer, u, v, cx, cy, f)
 
         print("[Info] Press Enter in terminal to close all windows...")
         input()
