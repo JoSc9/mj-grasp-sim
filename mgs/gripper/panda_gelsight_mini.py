@@ -97,23 +97,21 @@ XML = """
         <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
         <joint name="finger_joint1" pos="0 0 0" axis="0 1 0" type="slide" limited="true" range="0.0 0.04" damping="100" armature="1.0" frictionloss="1.0"/>
         <geom mesh="finger_0" material="off_white" class="visual"/>
-        <geom mesh="finger_1" material="black" class="visual"/>
         <geom mesh="finger_0" class="collision" name="panda_col_1" />
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" rgba="1 1 1 0.3" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" name="col_gelsight_left" group="4"/>
+        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" name="col_gelsight_left" group="4"/>
         <geom type="box" size="0.01 0.001 0.01" pos="0 -0.01325 0.04" priority="1" rgba="0 0 1 0" contype="1" conaffinity="1" name="hard_stop_left" solimp="0.99 0.99 0.001" solref="0.001 1" condim="3"/>
 
-        <camera name="tactile_cam_left" pos="0 0 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>
+        <camera name="tactile_cam_left" pos="0 0.01 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>
       </body>
       <body name="right_finger" pos="0 -0.04 0.0584" quat="0 0 0 1">
         <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
         <joint name="finger_joint2" pos="0 0 0" axis="0 1 0" type="slide" limited="true" range="-0.04 0.0" damping="100" armature="1.0" frictionloss="1.0"/>
         <geom mesh="finger_0" material="off_white" class="visual"/>
-        <geom mesh="finger_1" material="black" class="visual"/>
         <geom mesh="finger_0" class="collision" name="panda_col_7" />
-        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" rgba="1 0 0 0.5" name="col_gelsight_right" group="4"/>
+        <geom type="mesh" mesh="gelsight_shell" material="black" pos="0 0.005 0.04" quat="0 0.707 0 0.707" condim="6" mass="0.03" solimp="0.09 0.95 0.001 0.5 2" solref="1 1" name="col_gelsight_right" group="4"/>
         <geom type="box" size="0.01 0.001 0.01" pos="0 -0.01324 0.04" priority="1" rgba="0 1 0 0" contype="1" conaffinity="1" name="hard_stop_right" solimp="0.99 0.99 0.001" solref="0.001 1" condim="3"/>
 
-        <camera name="tactile_cam_right" pos="0 0 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>
+        <camera name="tactile_cam_right" pos="0 0.01 0.04" quat="0.707 -0.707 0 0" fovy="35" resolution="640 480"/>
 
       </body>
     </body>
@@ -141,7 +139,7 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
     # Elastic part of gelsight mini sensor before hard stop (-> value from: https://gitlab.sdu.dk/pengu20/mj_sim/-/blob/f9336f6d4b8d44384ce7ebab3739813f66d34dfc/sensors/gelsight_mini/gelsight_mini.py)
     ELASTOMER_THICKNESS = 0.004 
     # Thickness of gelsight mini sensor (computed by tactile_sensing/sensor_thickness.py)
-    SENSOR_THICKNESS = 0.01824
+    SENSOR_THICKNESS = 0.01825
     # Minimum physical width clamp (Hard component of Sensor = SENSOR_THICKNESS - ELASTOMER_THICKNESS)
     MIN_WIDTH_CLAMP = 2*(SENSOR_THICKNESS-ELASTOMER_THICKNESS)
 
@@ -234,7 +232,7 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
         # sim.data.ctrl[1] = target_q2
 
     def width_to_joints(self, width: float):
-        SENSOR_THICKNESS = 0.01824
+        SENSOR_THICKNESS = 0.01823
         adjusted_width = width + 2 * SENSOR_THICKNESS
         clamped_width = np.clip(adjusted_width, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
         target_q1 = clamped_width / 2.0
@@ -293,7 +291,7 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
     def _clamp_width(self, width: np.array) -> float:
         """Clamps the desired width to the gripper's operational range."""
         
-        SENSOR_THICKNESS = 0.01824
+        SENSOR_THICKNESS = 0.01823
         
         # Add sensor thickness of both sensors to the desired width
         adjusted_width = width + (2 * SENSOR_THICKNESS)

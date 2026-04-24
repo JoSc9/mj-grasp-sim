@@ -54,7 +54,7 @@ class GelSightMini(Camera):
 
         # constants from: https://github.com/danfergo/gelsight_simulation/tree/master
         self._min_depth = (
-            0.01425  # distance from the image sensor to the rigid glass outer surface
+            0.02423  # distance from the image sensor to the rigid glass outer surface
         )
         self._ELASTOMER_THICKNESS = 0.004  # m
         self._kernel_1_sigma = 7
@@ -462,7 +462,7 @@ class GelSightMini(Camera):
         - numpy.ndarray: Protrusion map where values exceeding `max_depth` are clamped to `max_depth`.
         """
         protrusion_map = np.copy(original)
-        cutoff_depth = self._max_depth + 0.002
+        cutoff_depth = self._max_depth
         protrusion_map[protrusion_map > cutoff_depth] = self._max_depth
 
         # OBS! This line caused the non-register issue
