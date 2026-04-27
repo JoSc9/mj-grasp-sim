@@ -341,6 +341,9 @@ def main(cfg: DictConfig):
                 n_cf_inc = int(np.count_nonzero(collision_mask))
                 r_cf += n_cf_inc
 
+                # Debug
+                print(f"[Sampling] {r_sampled} grasps generated. {r_cf} collision free. Target: {cfg.collect_grasps_till_eval}", end="\r")
+
                 if n_cf_inc:
                     collected_poses.append(poses_se3.to_mat()[collision_mask])
                     collected_joints.append(joints[collision_mask])
