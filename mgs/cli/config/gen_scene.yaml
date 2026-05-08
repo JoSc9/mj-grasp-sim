@@ -7,11 +7,11 @@ defaults:
   - object: object_list
   - env: clutter_table
 
-num_objects: 1
+num_objects: 5
 only_collision_free: True
 save_collision_grasps: True
 with_failed_grasps: False
-min_stable: 150
+min_stable: 200
 enough_stable: 600
 min_failed: 150
 enough_failed: 600

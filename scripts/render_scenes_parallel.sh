@@ -4,14 +4,14 @@
 set -euo pipefail
 
 #ids=(0 1 2 3 4 5 6 7 8 9 a b c d e f)
-ids=(0 1 2 3 4 5 6 7 8 9)
+ids=(0 1 2 3)
 total_cores=$(nproc)
 
 # Cores per job (default: 4, can be overridden by first argument)
 cores_per_job="${1:-4}"
 
 # Minimum core ID to start with (default: 0, can be overridden by second argument)
-min_core_id="${2:-30}"
+min_core_id="${2:-20}"
 
 # Validate min_core_id
 if [ "$min_core_id" -ge "$total_cores" ]; then

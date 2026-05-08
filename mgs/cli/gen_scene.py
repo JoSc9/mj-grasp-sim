@@ -440,7 +440,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
 def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
     #input_dir = os.getenv("MGS_INPUT_DIR")
     
-    output_dir = "/home/ws/data/outputs/train_clutter_new" 
+    output_dir = "/home/ws/data/outputs/context_clutter" 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     input_dir = os.path.join(repo_root, "outputs_obj_grasps")
     assert output_dir is not None, "No output_dir defined!"

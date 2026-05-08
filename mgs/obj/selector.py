@@ -204,7 +204,7 @@ def get_objects(cfg: DictConfig) -> List[CollisionMeshObject]:
         if isinstance(cfg.ids, str):
             ids_list = [cfg.ids]
         else:
-            ids_list = cfg.ids
+            ids_list = list(cfg.ids)
 
         ycb_obj_ids = [("ycb", o) for o in ObjectYCB.all_object_ids() if o in ids_list]
         gso_obj_ids = [("gso", o) for o in ObjectGSO.all_object_ids() if o in ids_list]
