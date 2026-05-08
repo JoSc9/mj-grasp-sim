@@ -218,11 +218,13 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 scipy_random_quat = Rotation.from_euler("z", np.random.uniform(0, 2 * np.pi)).as_quat() 
                 mujoco_random_quat = quat_xyzw_to_wxyz(scipy_random_quat)
             return SE3Pose(
-                pos=np.array([np.random.normal(0., 0.02), np.random.normal(0., 0.02), 0.4]), quat=mujoco_random_quat, type="wxyz"
+                pos=np.array([np.random.uniform(-0.1, 0.1), np.random.uniform(-0.1, 0.1), 0.4]), quat=mujoco_random_quat, type="wxyz"
+                #pos=np.array(0.4, np.random.uniform(0., 0.4), 0.4]), quat=mujoco_random_quat, type="wxyz"
             )
 
-        drop_pose = random_pose()
+        
         for obj_name in self.object_names:
+            drop_pose = random_pose()
             jnt_adr_start = (
                 self.model.jnt("{}:joint".format(obj_name)).qposadr[0].item()
             )

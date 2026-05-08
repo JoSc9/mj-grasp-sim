@@ -4,6 +4,15 @@ import mujoco
 import numpy as np
 from tqdm import tqdm
 
+# Visualization imports
+try:
+    import plotly.graph_objects as go
+    import trimesh
+    VISUALIZATION_AVAILABLE = True
+except ImportError:
+    VISUALIZATION_AVAILABLE = False
+    print("Warning: plotly and/or trimesh not available. Visualization will be limited.")
+
 from mgs.core.simualtion import MjSimulation
 from mgs.gripper.base import MjShakableOpenCloseGripper
 from mgs.obj.base import CollisionMeshObject
@@ -81,6 +90,8 @@ class GravitylessObjectGrasping(MjSimulation):
             raise ValueError(
                 f"Joints array has incorrect dimension ({joints.shape[1]}), expected {len(self.gripper.get_actuator_joint_names())}."
             )
+            
+        self._visualize_grasp_results(poses, np.array([True] * len(poses)))  # visualize all poses before checking collisions
 
         collision_free_mask: List[bool] = []
         num_grasps = len(poses)
@@ -174,6 +185,10 @@ class GravitylessObjectGrasping(MjSimulation):
         gripper_joint_idxs = self.get_joint_idxs(
             self.gripper.get_actuator_joint_names()
         )
+        
+        # visualize all generated grasps
+        results_placeholder = np.array([True] * num_grasps)  # placeholder for visualization
+        self._visualize_grasp_results(poses, results_placeholder)
 
         # keep the user's original sim state
         initial_state = self.get_state()
@@ -246,6 +261,9 @@ class GravitylessObjectGrasping(MjSimulation):
                 results.append(all_pass)
 
             results_arr = np.array(results, dtype=bool)
+            
+            # visualize results on obj
+            self._visualize_grasp_results(poses, results_arr)
             return results_arr
 
         finally:
@@ -277,3 +295,190 @@ class GravitylessObjectGrasping(MjSimulation):
             ):
                 return True
         return False
+
+    def _visualize_grasp_results(self, poses: List[SE3Pose], results: np.ndarray):
+        """
+        Visualize grasp poses as coordinate frames with object mesh using plotly.
+        Green coordinate frames for successful grasps, red for failed grasps.
+        """
+        obj_pos = self.get_object_transform(self.obj.name).pos
+        
+        print(f"Visualizing {len(poses)} grasp poses:")
+        print(f"  Successful grasps: {np.sum(results)} / {len(results)}")
+        print(f"  Success rate: {np.sum(results) / len(results) * 100:.1f}%")
+        
+        if not VISUALIZATION_AVAILABLE:
+            print("  Plotly/trimesh not available. Visualization skipped.")
+            return
+            
+        try:
+            # Create plotly figure
+            fig = go.Figure()
+            
+            # Load and add object mesh
+            self._add_object_mesh_to_plot(fig)
+            
+            # Add coordinate frames
+            self._add_coordinate_frames_to_plot(fig, poses, results)
+            
+            # Configure layout
+            fig.update_layout(
+                title=f"Grasp Coordinate Frames - {np.sum(results)}/{len(results)} successful ({np.mean(results)*100:.1f}%)",
+                scene=dict(
+                    xaxis_title="X (m)",
+                    yaxis_title="Y (m)", 
+                    zaxis_title="Z (m)",
+                    aspectmode="data",
+                    camera=dict(
+                        eye=dict(x=1.5, y=1.5, z=1.5),
+                        center=dict(x=0, y=0, z=0)
+                    )
+                ),
+                margin=dict(l=0, r=0, b=0, t=40),
+                legend=dict(itemsizing="constant")
+            )
+            
+            # Show the plot
+            fig.show()
+            print(f"  Interactive 3D visualization opened in browser")
+            
+        except Exception as e:
+            print(f"  Visualization error: {e}")
+            print("  Falling back to basic console output")
+            
+    def _add_object_mesh_to_plot(self, fig):
+        """Add object mesh to the plotly figure using trimesh."""
+        try:
+            # Load mesh from object file path
+            if hasattr(self.obj, 'obj_file_path') and self.obj.obj_file_path:
+                mesh = trimesh.load(self.obj.obj_file_path)
+                
+                # Get object transform
+                obj_transform = self.get_object_transform(self.obj.name)
+                transform_matrix = obj_transform.to_mat()
+                
+                # Transform mesh vertices
+                vertices = mesh.vertices
+                vertices_homogeneous = np.column_stack([vertices, np.ones(len(vertices))])
+                transformed_vertices = (transform_matrix @ vertices_homogeneous.T).T[:, :3]
+                
+                # Add mesh to plot
+                fig.add_trace(go.Mesh3d(
+                    x=transformed_vertices[:, 0],
+                    y=transformed_vertices[:, 1],
+                    z=transformed_vertices[:, 2],
+                    i=mesh.faces[:, 0],
+                    j=mesh.faces[:, 1],
+                    k=mesh.faces[:, 2],
+                    opacity=0.5,
+                    color='lightblue',
+                    name='Object Mesh',
+                    showscale=False
+                ))
+                print(f"  Object mesh loaded: {len(vertices)} vertices, {len(mesh.faces)} faces")
+            else:
+                # Fallback: add a sphere at object center
+                obj_pos = self.get_object_transform(self.obj.name).pos
+                fig.add_trace(go.Scatter3d(
+                    x=[obj_pos[0]],
+                    y=[obj_pos[1]],
+                    z=[obj_pos[2]],
+                    mode='markers',
+                    marker=dict(size=15, color='blue', opacity=0.7),
+                    name='Object Center'
+                ))
+                print(f"  Object center marker added at {obj_pos}")
+        except Exception as e:
+            print(f"  Could not load object mesh: {e}")
+            # Fallback to object center point
+            obj_pos = self.get_object_transform(self.obj.name).pos
+            fig.add_trace(go.Scatter3d(
+                x=[obj_pos[0]],
+                y=[obj_pos[1]],
+                z=[obj_pos[2]],
+                mode='markers',
+                marker=dict(size=15, color='blue', opacity=0.7),
+                name='Object Center'
+            ))
+            print(f"  Fallback: Object center marker added at {obj_pos}")
+    
+    def _add_coordinate_frames_to_plot(self, fig, poses: List[SE3Pose], results: np.ndarray):
+        """Add coordinate frames for each grasp pose using SE3Pose .pos and .quat attributes."""
+        frame_scale = 0.05  # Length of coordinate frame axes
+        
+        # Process successful and failed grasps separately
+        for success_value, color, name in [(True, 'green', 'Successful Grasps'), 
+                                          (False, 'red', 'Failed Grasps')]:
+            
+            matching_poses = [(pose, success) for pose, success in zip(poses, results) if success == success_value]
+            
+            if not matching_poses:
+                continue
+                
+            # Prepare all line data for batch processing
+            all_x, all_y, all_z = [], [], []
+            centers = []
+            
+            for pose, _ in matching_poses:
+                pos = pose.pos
+                quat = pose.quat  # quaternion in wxyz format
+                
+                # Convert quaternion to rotation matrix
+                # quat = [w, x, y, z] format
+                w, x, y, z = quat[0], quat[1], quat[2], quat[3]
+                
+                # Quaternion to rotation matrix conversion
+                rot_matrix = np.array([
+                    [1 - 2*(y*y + z*z), 2*(x*y - w*z), 2*(x*z + w*y)],
+                    [2*(x*y + w*z), 1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+                    [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)]
+                ])
+                
+                # Calculate coordinate frame axes
+                x_axis_end = pos + frame_scale * rot_matrix[:, 0]  # X-axis (red)
+                y_axis_end = pos + frame_scale * rot_matrix[:, 1]  # Y-axis (green)
+                z_axis_end = pos + frame_scale * rot_matrix[:, 2]  # Z-axis (blue)
+                
+                # Add X-axis line
+                all_x.extend([pos[0], x_axis_end[0], None])
+                all_y.extend([pos[1], x_axis_end[1], None])
+                all_z.extend([pos[2], x_axis_end[2], None])
+                
+                # Add Y-axis line
+                all_x.extend([pos[0], y_axis_end[0], None])
+                all_y.extend([pos[1], y_axis_end[1], None])
+                all_z.extend([pos[2], y_axis_end[2], None])
+                
+                # Add Z-axis line
+                all_x.extend([pos[0], z_axis_end[0], None])
+                all_y.extend([pos[1], z_axis_end[1], None])
+                all_z.extend([pos[2], z_axis_end[2], None])
+                
+                centers.append(pos)
+            
+            # Add all coordinate frame lines as a single trace
+            if all_x:
+                fig.add_trace(go.Scatter3d(
+                    x=all_x,
+                    y=all_y,
+                    z=all_z,
+                    mode='lines',
+                    line=dict(color=color, width=4),
+                    name=f'{name} Frames',
+                    showlegend=True,
+                    hoverinfo='skip'
+                ))
+                
+                # Add center points for reference
+                centers = np.array(centers)
+                fig.add_trace(go.Scatter3d(
+                    x=centers[:, 0],
+                    y=centers[:, 1], 
+                    z=centers[:, 2],
+                    mode='markers',
+                    marker=dict(size=5, color=color, opacity=0.8,
+                               line=dict(width=1, color='black')),
+                    name=f'{name} Centers',
+                    showlegend=False
+                ))
+

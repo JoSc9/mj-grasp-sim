@@ -64,11 +64,11 @@ def _fmt_eta(seconds: float) -> str:
 )
 def main(cfg: DictConfig):
     # --- select object ---
-    #object_id_folder = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects")
-    #object_id_file = os.path.join(object_id_folder, cfg.obj_file_name)
-    #with open(object_id_file, "r") as file:
-    #    all_object_ids = file.read().splitlines()
-    all_object_ids =["angle_grinder"] 
+    object_id_folder = os.path.join(ASSET_PATH, "mj-objects", "fast_eta_objects")
+    object_id_file = os.path.join(object_id_folder, cfg.obj_file_name)
+    with open(object_id_file, "r") as file:
+        all_object_ids = file.read().splitlines()
+    #all_object_ids =["angle_grinder"] 
         
     #object_ids = all_object_ids[int(cfg.object_id)]
 
@@ -107,6 +107,8 @@ def main(cfg: DictConfig):
         print(f"Grasps to generate (target minus existing): {grasps_to_generate}")
 
         env = GravitylessObjectGrasping(gripper, obj)
+        
+        
 
         # rolling buffers
         buf_poses, buf_joints = [], []
@@ -362,6 +364,7 @@ def main(cfg: DictConfig):
 
             attempts = len(cf_poses)
             stables = int(np.count_nonzero(stable_mask))
+            
 
             total_attempts += attempts
             attempts_since_last_save += attempts

@@ -1,4 +1,5 @@
 import os
+import json
 from copy import deepcopy
 
 import hydra
@@ -188,8 +189,8 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
         obj_list = get_objects(cfg.object)
         
         # If num_objects is specified and less than available objects, randomly select
-        if hasattr(cfg, 'num_objects') and cfg.num_objects is not None and cfg.num_objects < len(obj_list):
-            raise ValueError(f"more than {cfg.num_objects} objecs selected.")
+        #if hasattr(cfg, 'num_objects') and cfg.num_objects is not None and cfg.num_objects < len(obj_list):
+        #    raise ValueError(f"more than {cfg.num_objects} objecs selected.")
             
         gripper = get_gripper(
             cfg.gripper,
@@ -203,9 +204,12 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
         
         # Convert SE3Pose objects to matrices for serialization
         obj_poses_matrices = {}
-        for obj_name, pose in obj_poses.items():
+        obj_ids = {} 
+        for i, (obj_name, pose) in enumerate(obj_poses.items()):
             obj_poses_matrices[obj_name] = pose.to_mat()
+            obj_ids[obj_name] = env.object_ids[i]   
         scene_dict["obj_poses"] = obj_poses_matrices
+        scene_dict["obj_ids"] = obj_ids 
 
         exclude_scene = False
         for obj_name in getattr(env, "object_names", []):
@@ -390,6 +394,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
     result = []
     neg_result = []
     failed_result = []
+    grasp_info = {} 
     for obj_idx in np.unique(result_obj_indices):
         mask = result_obj_indices == obj_idx
         if sum(mask) == 0:
@@ -403,6 +408,8 @@ def filter_grasps(cfg: DictConfig, scene_def):
                 "joints": result_joints[mask],
             }
         )
+        grasp_info[obj_id] = result_poses[mask].shape[0]    
+        
         if cfg.save_collision_grasps:
             collision_mask = collision_obj_indices == obj_idx
             if sum(collision_mask) > 0:
@@ -426,16 +433,16 @@ def filter_grasps(cfg: DictConfig, scene_def):
                     }
                 )
 
-    return result, neg_result, failed_result
+    return result, neg_result, failed_result, grasp_info
 
 
 @hydra.main(version_base=None, config_path="config", config_name="gen_scene")
 def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
     #input_dir = os.getenv("MGS_INPUT_DIR")
     
-    output_dir = "/home/ws/data/outputs/test_assymetric_ood_objects" 
+    output_dir = "/home/ws/data/outputs/train_clutter_new" 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    input_dir = os.path.join(repo_root, "outputs")
+    input_dir = os.path.join(repo_root, "outputs_obj_grasps")
     assert output_dir is not None, "No output_dir defined!"
     assert input_dir is not None, "No input_dir defined!"
 
@@ -447,7 +454,7 @@ def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
     
     #try:
     scene_dict = gen_stable_scene(cfg)
-    valid_grasps, invalid_grasps, failed_grasps = filter_grasps(cfg, scene_dict)
+    valid_grasps, invalid_grasps, failed_grasps, grasp_info = filter_grasps(cfg, scene_dict)
     
     output_dir = os.path.join(
         output_dir,
@@ -463,6 +470,11 @@ def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
             "scene_definition": scene_dict,
         },
     )
+    # save grasp info as json
+    grasp_info_path = os.path.join(output_dir, "grasp_info.json")
+    with open(grasp_info_path, 'w') as f:
+        json.dump(grasp_info, f, indent=2)
+    
     for grasps in valid_grasps:
         obj_id, obj_name = grasps["object_id"], grasps["object_name"]
         object_path = os.path.join(output_dir, obj_id + "_" + obj_name)

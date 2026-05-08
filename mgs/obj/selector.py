@@ -272,7 +272,7 @@ def get_objects(cfg: DictConfig) -> List[CollisionMeshObject]:
 
         num_objects = cfg.num_objects
         fast_object_file = os.path.join(
-            GIT_PATH, "asset", "mj-objects", "fast_eta_objects.txt"
+            GIT_PATH, "asset", "mj-objects", "obj_unsymmetric_train.txt"
         )
         with open(fast_object_file, "r") as file:
             fast_objects = file.read().splitlines()
@@ -285,7 +285,7 @@ def get_objects(cfg: DictConfig) -> List[CollisionMeshObject]:
             ("gso", i) for i in ObjectGSO.all_object_ids() if i in fast_objects
         ]
         obj_ids = ycb_obj_ids + gso_obj_ids
-        chosen_obj_ids = random.choices(obj_ids, k=num_objects)
+        chosen_obj_ids = random.sample(obj_ids, k=num_objects)
 
         x, y = -8.5, -8
         for i, tagged_obj in enumerate(chosen_obj_ids):

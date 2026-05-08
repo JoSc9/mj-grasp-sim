@@ -30,7 +30,7 @@ def main(cfg: DictConfig):
     #assert output_dir_all is not None
     #assert input_dir_all is not None
     
-    input_dir_all = "/home/ws/data/outputs/test_assymetric_ood_objects" 
+    input_dir_all = "/home/ws/data/outputs/train_clutter_new" 
     output_dir_all = input_dir_all
     assert output_dir_all is not None, "No output_dir defined!"
     assert input_dir_all is not None, "No input_dir defined!"
