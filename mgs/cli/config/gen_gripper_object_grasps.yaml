@@ -2,7 +2,7 @@ defaults:
   - _self_
   - gripper: panda
 
-obj_file_name: fast_eta_objects.txt
+obj_file_name: fast_eta_objects_part_00.txt
 
 max_rounds: 100
 
@@ -11,7 +11,7 @@ name: Fast_Data_Subset
 target_grasps: 5000
 
 # collect grasps on sampling
-sample_grasps: 1000
+sample_grasps: 800
 
 # num grasps to collect from sampling + collision filtering till stability eval.
 collect_grasps_till_eval: 100
@@ -23,7 +23,7 @@ collect_grasps_till_save: 100
 object_id: 0
 
 # force per impulse
-force: 200.0
+force: 150.0 #200.0
 
 hydra:
   job:
