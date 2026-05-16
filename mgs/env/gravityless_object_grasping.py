@@ -145,6 +145,127 @@ class GravitylessObjectGrasping(MjSimulation):
             self.set_state(initial_state)
         return np.array(collision_free_mask)
 
+    def grasp_max_impulse_force_evaluation(
+            self,
+            poses: SE3Pose,
+            joints: np.ndarray,
+            start_force: float = 10.0,
+            max_force: float = 200.0,
+            force_step: float = 10.0
+    ) -> np.ndarray:
+        """
+        Evaluates the maximum impulse force a grasp can withstand per direction. 
+        Returns an array of shape (num_grasps, 6) containing the maximum force for each tested direction.
+        """
+        if len(poses) != len(joints):
+            raise ValueError(
+                f"Number of poses ({len(poses)}) must match number of joint configurations ({len(joints)})."
+            )
+        if joints.shape[1] != len(self.gripper.get_actuator_joint_names()):
+            raise ValueError(
+                f"Joints array has incorrect dimension ({joints.shape[1]}), expected {len(self.gripper.get_actuator_joint_names())}."
+            )
+        
+        # Center of mass of the object
+        object_bid = self.model.body(self.obj.name).id
+        
+        num_grasps = len(poses)
+        gripper_joint_idxs = self.get_joint_idxs(self.gripper.get_actuator_joint_names())
+
+        # Store the maximum forces in all 6 directions for each grasp
+        all_max_forces = []
+        dir_names = ["+X", "+Y", "+Z", "-X", "-Y", "-Z"]
+
+        # keep the user's original sim state
+        initial_state = self.get_state()
+
+        try:
+            for i in tqdm(range(num_grasps)):
+                # Close gripper and save state
+                mujoco.mj_resetData(self.model, self.data)
+                mujoco.mj_forward(self.model, self.data)
+
+                b2c = self.gripper.base_to_contact_transform()
+                pose_processed = poses[i] @ b2c
+                self.set_qpos(joints[i], gripper_joint_idxs)
+                self.gripper.set_pose(self, pose_processed)
+                mujoco.mj_forward(self.model, self.data)
+
+                self.gripper.close_gripper_at(self, pose_processed)
+
+                if self.viewer is not None:
+                    self.viewer.sync()
+
+                # If the grasp fails right from the start, record 0.0 for all 6 directions
+                if not self.check_contact_with_object():
+                    print(f"[Info] Grasp {i}: Failed during closing.")
+                    all_max_forces.append([0.0] * 6)
+                    continue
+
+                # Save the state before we start applying kicks
+                closed_state = self.get_state()
+
+                # Vectors for the 6 kick directions in the local gripper coordinate system
+                Rg = pose_processed.to_mat()[:3, :3].astype(float)
+                local_dirs = np.eye(3, dtype=float)
+                dirs_world = np.concatenate(
+                    [
+                        Rg @ local_dirs[:, [0, 1, 2]],    # +x, +y, +z
+                        -(Rg @ local_dirs[:, [0, 1, 2]]), # -x, -y, -z
+                    ],
+                    axis=1,
+                ).T  # Shape: (6, 3)
+                
+                # Stores the 6 max values for this specific grasp
+                grasp_max_forces = [] 
+
+                # Test each direction individually
+                for idx, d in enumerate(dirs_world):
+                    max_f_dir = 0.0
+                    current_f = start_force
+
+                    # Increase force
+                    while current_f <= max_force:
+                        # Reset the gripper to the clean initial state before each kick
+                        self.set_state(closed_state)
+                        mujoco.mj_forward(self.model, self.data)
+
+                        F = current_f * d
+                        
+                        # Apply kick
+                        for _ in range(5):
+                            self.data.xfrc_applied[object_bid, :3] += F
+                            mujoco.mj_step(self.model, self.data, nstep=1)
+                            self.data.xfrc_applied[object_bid, :] = 0.0
+                            mujoco.mj_step(self.model, self.data, nstep=10)
+
+                        # Let the simulation settle
+                        mujoco.mj_step(self.model, self.data, nstep=500)
+
+                        # Check if the grasp survived the kick
+                        if self.check_contact_with_object():
+                            # Current force survived -> try the next force 
+                            max_f_dir = current_f
+                            current_f += force_step
+                        else:
+                            # Kick failed
+                            break 
+
+                    grasp_max_forces.append(max_f_dir)
+
+                # Terminal output
+                print(f"\n[Result] Grasp {i} Max Forces (N):")
+                for name, force in zip(dir_names, grasp_max_forces):
+                    print(f"  {name}: {force} N")
+
+                all_max_forces.append(grasp_max_forces)
+
+            return np.array(all_max_forces)
+
+        finally:
+            # Restore original sim state
+            self.set_state(initial_state)
+
     def grasp_stability_evaluation_from_joints(
         self,
         poses: SE3Pose,
