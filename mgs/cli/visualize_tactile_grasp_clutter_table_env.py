@@ -21,7 +21,7 @@ def main():
     # 1. Configuration 
     GRIPPER_NAME = "PandaGripperGelsightMini"
     # Replace with your target object ID
-    OBJECT_ID = "011_banana" 
+    OBJECT_ID = "072-d_toy_airplane" 
     
     BASE_DIR = os.path.expanduser(f"~/mj_data/out/debug_force_eval/{GRIPPER_NAME}/friction_gelsight_mini/{OBJECT_ID}")
     
@@ -48,7 +48,7 @@ def main():
     # Set up table environment
     env = ClutterTableEnv(gripper,[obj], headless=True, scene_randomization=False)
     model = env.model
-    model.vis.map.znear = 0.001
+    model.vis.map.znear = 0.00001
     model.vis.map.zfar = 50.0
     mj_data = env.data
 
@@ -165,7 +165,7 @@ def main():
                 
 
                 # Step simulation to watch it close
-                steps_to_close = 1000
+                steps_to_close = 500
                 render_interval = 5
                 skip_to_next_grasp = False
 
@@ -205,9 +205,68 @@ def main():
                 
                 if skip_to_next_grasp:
                     continue
+
+                # Lift Test (2000 steps)
+                print("Closing complete. Starting lift test")
+                steps_to_lift = 2000
+                lift_dist = 0.3
+                start_pose_lift = np.copy(mj_data.mocap_pos[0, :])
+                lift_target_z = start_pose_lift[2] + lift_dist
+
+                for step in range(steps_to_lift):
+                    # Gripper should stay closed
+                    mj_data.ctrl[:] = close_ctrl
+
+                    # Interpolate the z position upwards
+                    alpha = step / steps_to_lift
+                    mj_data.mocap_pos[0, 2] = start_pose_lift[2] + (lift_target_z - start_pose_lift[2]) * alpha
+
+                    mujoco.mj_step(model, mj_data)
+
+                    if viewer.is_running():
+                        viewer.sync()
+
+                    # Render tactile images periodically
+                    if step % render_interval == 0:
+                        img_l = left_sensor.tactile_image
+                        img_r = right_sensor.tactile_image
+
+                        if img_l is not None and img_r is not None:
+                            bgr_l = np.uint8(cv2.normalize(cv2.cvtColor(img_l.astype(np.float32), cv2.COLOR_RGB2BGR), None, 0, 255, cv2.NORM_MINMAX))
+                            bgr_r = np.uint8(cv2.normalize(cv2.cvtColor(img_r.astype(np.float32), cv2.COLOR_RGB2BGR), None, 0, 255, cv2.NORM_MINMAX))
+
+                            cv2.imshow(f"Left Sensor", bgr_l)
+                            cv2.imshow(f"Right Sensor", bgr_r)
+
+                        key = cv2.waitKey(1) & 0xFF
+                        if key == ord('q'):
+                            print("Quitting visualization.")
+                            return
+                        elif key == ord(' '):
+                            print("Skipping to next grasp...")
+                            skip_to_next_grasp = True
+                            break
+                        elif key == ord('n'):
+                            print("Skipping to next file...")
+                            skip_file = True
+                            break
+
+                if skip_file:
+                    break # Break out of the inner loop, moving to the next file in the outer loop
+                
+                if skip_to_next_grasp:
+                    continue
+
+                # Verification
+                if env.check_gripper_contact():
+                    print("Grasp successful (object lifted and contact maintained)")
+                else:
+                    print("Grasp failed (object slipped or contact lost)")
+
+
                 
                 # Wait for user at the end of the grasp
-                print("Grasp complete. Press [Space] for next grasp, [n] for next file, [q] to quit...")
+                print("Press [Space] for next grasp, [n] for next file, [q] to quit...")
                 while True:
                     key = cv2.waitKey(0) & 0xFF
                     if key == ord(' '):
