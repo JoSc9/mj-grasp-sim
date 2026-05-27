@@ -17,6 +17,7 @@
 import random
 from copy import deepcopy
 from typing import List, TypedDict
+import time
 
 import mujoco
 import numpy as np
@@ -87,7 +88,7 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         self,
         gripper: MjShakableOpenCloseGripper,
         objects: List[CollisionMeshObject],
-        headless=True,
+        headless=False,
         scene_randomization=True,
     ):
         self.gripper = gripper
@@ -904,6 +905,8 @@ class ClutterTableEnv(MjScanEnv, Loadable):
         poses: SE3Pose,
         joints: np.ndarray,
         with_padding: float | None = None,
+        visualize: bool = False,
+        render_delay: float = 0.2,
     ) -> np.ndarray:
         """
         Checks collisions for each grasp pose (and optionally its 6 axis-aligned
@@ -978,6 +981,16 @@ class ClutterTableEnv(MjScanEnv, Loadable):
                 self.set_qpos(joint, gripper_joint_idxs)
                 self.gripper.set_pose(self, pose_processed)
                 mujoco.mj_forward(self.model, self.data)
+
+                # Visualization debug
+                if visualize:
+                    if self.viewer and self.viewer.is_running():
+                        self.viewer.sync() # Push the state to the screen
+                    
+                        time.sleep(render_delay) # Pause so you can see it
+                        
+                        is_colliding = self.check_gripper_collision()
+                        print(f"Grasp {i} | Padded: {delta is not None} | Collision: {bool(is_colliding)}")
 
                 if self.check_gripper_collision():
                     all_clear = False

@@ -155,7 +155,7 @@ def fps_rank_grasps(
 
 def get_grasps(gripper_name, obj_id):
     grasp_dir = os.path.join(  # type: ignore
-        os.getenv("MGS_INPUT_DIR"),  # type: ignore
+        os.getenv("MGS_OUTPUT_DIR"),  # type: ignore
         gripper_name,
         obj_id,
     )
@@ -216,7 +216,7 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
 
 
 def filter_grasps(cfg: DictConfig, scene_def):
-    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)), headless=True)
+    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)), headless=False)
 
     all_grasps = []
     for obj_name, obj_id in zip(env.object_names, env.object_ids):
@@ -273,7 +273,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
     collision_free_mask = env.grasp_collision_mask(
         SE3Pose.from_mat(deepcopy(all_poses), type="wxyz"),
         deepcopy(all_joints),
-        with_padding=0.002,
+        with_padding=0.002, visualize=True, render_delay=0.5
     )
 
     if sum(collision_free_mask) <= 0:
