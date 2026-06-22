@@ -88,7 +88,7 @@ def plot_grasp_analytics(forces: np.ndarray, plot_title: str, save_path: str = N
 
 
 if __name__ == "__main__":
-    input_root = os.path.expanduser(os.path.join("~/mj_data", "out", "debug_force_eval", "PandaGripperGelsightMini", "friction_gelsight_mini"))
+    input_root = os.path.expanduser(os.path.join("~/mj_data", "out", "debug_force_eval", "PandaGripperGelsightMini", "friction_panda"))
     results_base_dir = os.path.join(os.path.dirname(input_root), "results_eval")
     os.makedirs(results_base_dir, exist_ok=True)
 

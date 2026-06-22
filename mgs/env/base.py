@@ -67,7 +67,8 @@ class MjScanEnv(MjSimulation):
 
     def get_camera_extrinsics(self):
         pos = np.copy(self.data.cam_xpos)
-        rot_mat = np.reshape(np.copy(self.data.cam_xmat), (3, 3))
+        # Extract the 9 elements for the specific camera, then reshape
+        rot_mat = np.reshape(np.copy(self.data.cam_xmat[self.camera_id]), (3, 3))
 
         extrinsics = np.eye(4)
         extrinsics[:3, :3] = rot_mat

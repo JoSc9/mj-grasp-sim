@@ -92,7 +92,7 @@ def main(cfg: DictConfig):
 
         # --- output dir ---
         output_root = os.getenv("MGS_OUTPUT_DIR") or os.path.join(os.getcwd(), "outputs")
-        output_dir = os.path.join(output_root, cfg.gripper.name, object_id)
+        output_dir = os.path.join(output_root, "01_grasp", cfg.gripper.name, object_id)
         os.makedirs(output_dir, exist_ok=True)
 
         # how many are already saved (from all processes)?
@@ -343,7 +343,8 @@ def main(cfg: DictConfig):
 
                 # Debug
                 print(f"[Sampling] {r_sampled} grasps generated. {r_cf} collision free. Target: {cfg.collect_grasps_till_eval}", end="\r")
-
+                if r_sampled > 15000:
+                    break
                 if n_cf_inc:
                     collected_poses.append(poses_se3.to_mat()[collision_mask])
                     collected_joints.append(joints[collision_mask])

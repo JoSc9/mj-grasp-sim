@@ -21,8 +21,10 @@ def main():
     # 1. Configuration 
     GRIPPER_NAME = "PandaGripperGelsightMini"
     # Replace with your target object ID
-    OBJECT_ID = "072-d_toy_airplane" 
-    
+    #OBJECT_ID = "072-d_toy_airplane" 
+    #OBJECT_ID = "062_dice"
+    OBJECT_ID = "011_banana"
+
     BASE_DIR = os.path.expanduser(f"~/mj_data/out/debug_force_eval/{GRIPPER_NAME}/friction_gelsight_mini/{OBJECT_ID}")
     
     # 2. Find all .npz files in the directory

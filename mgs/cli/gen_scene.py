@@ -156,6 +156,7 @@ def fps_rank_grasps(
 def get_grasps(gripper_name, obj_id):
     grasp_dir = os.path.join(  # type: ignore
         os.getenv("MGS_OUTPUT_DIR"),  # type: ignore
+        "01_grasp",
         gripper_name,
         obj_id,
     )
@@ -216,7 +217,7 @@ def gen_stable_scene(cfg: DictConfig, max_attempts: int = 5):
 
 
 def filter_grasps(cfg: DictConfig, scene_def):
-    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)), headless=False)
+    env = get_env_from_dict(cfg.env, (deepcopy(scene_def)), headless=True)
 
     all_grasps = []
     for obj_name, obj_id in zip(env.object_names, env.object_ids):
@@ -273,7 +274,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
     collision_free_mask = env.grasp_collision_mask(
         SE3Pose.from_mat(deepcopy(all_poses), type="wxyz"),
         deepcopy(all_joints),
-        with_padding=0.002, visualize=True, render_delay=0.5
+        with_padding=0.000, visualize=True, render_delay=0.5
     )
 
     if sum(collision_free_mask) <= 0:
@@ -418,24 +419,21 @@ def filter_grasps(cfg: DictConfig, scene_def):
 
 
 @hydra.main(version_base=None, config_path="config", config_name="gen_scene")
-def main(cfg: DictConfig):    #output_dir = os.getenv("MGS_OUTPUT_DIR")
-    #input_dir = os.getenv("MGS_INPUT_DIR")
+def main(cfg: DictConfig):    
+    output_dir = os.getenv("MGS_OUTPUT_DIR")
+    output_dir = os.path.join(output_dir, "02_scene", cfg.gripper.name)
+    os.makedirs(output_dir, exist_ok=True)
+    input_dir = os.getenv("MGS_INPUT_DIR")
     
-    output_dir = "/home/ws/data/outputs/new_scenes" 
+    # output_dir = "/home/ws/data/outputs/new_scenes" 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    input_dir = os.path.join(repo_root, "outputs")
+
     assert output_dir is not None, "No output_dir defined!"
     assert input_dir is not None, "No input_dir defined!"
 
-    # Ensure helpers that call os.getenv("MGS_INPUT_DIR") / MGS_OUTPUT_DIR
-    # receive valid paths (prevents passing None into os.path.join).
-    os.environ.setdefault("MGS_INPUT_DIR", input_dir)
-    # set base output dir (before adding gripper/hash suffix)
-    os.environ.setdefault("MGS_OUTPUT_DIR", output_dir)
 
     output_dir = os.path.join(
         output_dir,
-        cfg.gripper.name,
         generate_unique_hash(16),
     )
 
