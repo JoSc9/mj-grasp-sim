@@ -70,26 +70,19 @@ def run_test():
             if now - last_toggle > 2.0:
                 if is_open:
                     print("Closing fingers...")
-                    # values taken from your original close_gripper logic
                     data.ctrl[0] = 0.0
                     data.ctrl[1] = -0.04
                     is_open = False
                 else:
                     print("Opening fingers...")
-                    # values taken from your original open_gripper logic
                     data.ctrl[0] = 0.04
                     data.ctrl[1] = 0.0
                     is_open = True
                 
                 last_toggle = now
 
-            # step the physics engine
             mujoco.mj_step(model, data)
-            
-            # sync the viewer with the new physics state
             viewer.sync()
-            
-            # tiny sleep so we don't melt the CPU by running the while loop too fast
             time.sleep(0.01)
 
 

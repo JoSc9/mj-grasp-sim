@@ -41,7 +41,7 @@ def visualize_tactile_pointcloud(depth_map: np.ndarray, px2m_ratio: float, max_d
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.001, max_nn=30))
     pcd.orient_normals_towards_camera_location(camera_location=np.array([0., 0., 0.]))
     
-    print("[Info] Öffne 3D Viewer. Schließe das Fenster, um die Simulation fortzusetzen/zu beenden.")
+    print("[Info] Opening 3D viewer. Close the window to continue or stop the simulation.")
     o3d.visualization.draw_geometries([pcd])
 
 def show_raw_pointcloud(data, depth_renderer, u, v, cx, cy, f):
@@ -112,7 +112,7 @@ def main():
             cam_name="tactile_cam_left"
         )
         right_sensor = GelSightMini(
-            args=DummyArgs,
+            args=dummy_args,
             model=model,
             data=data,
             cam_name="tactile_cam_right"
@@ -208,7 +208,7 @@ def main():
                 tactile_img_rgb_l = left_sensor.tactile_image
                 tactile_img_rgb_r = right_sensor.tactile_image
 
-                if tactile_img_rgb_l & tactile_img_rgb_r is not None:
+                if tactile_img_rgb_l is not None and tactile_img_rgb_r is not None:
                     # Convert for OpenCV
                     tactile_img_bgr_l = cv2.cvtColor(tactile_img_rgb_l.astype(np.float32), cv2.COLOR_RGB2BGR)
                     tactile_img_bgr_l = cv2.normalize(tactile_img_bgr_l, None, 0, 255, cv2.NORM_MINMAX)

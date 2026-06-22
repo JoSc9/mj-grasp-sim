@@ -145,7 +145,6 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
 
     # Joint limits from XML
     Q1_RANGE = [0.0, 0.04]
-    # TODO: Anpassen nur bis max schließen
     Q2_RANGE = [-0.04, 0.0]
 
     def __init__(self, pose: SE3Pose):
@@ -218,22 +217,14 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
         mujoco.mj_forward(sim.model, sim.data)
 
     def close_gripper(self, sim: MjSimulation):
-        """Commands the gripper to its fully closed state based on original command."""
-        # Use dynamic width computation with negative distance to ensure to return MIN_WIDTH_CLAMP
-        # If width_to_joints is called with width=0.00 -> Gripper only closes to 2*SENSOR_THICKNESS -> Object would only be touched and might slip
+        """Commands the gripper to its fully closed state."""
+        # width_to_joints(-1.0) guarantees the hard stop is reached regardless of object size
         target_joints = self.width_to_joints(-1.0)
-        
         sim.data.ctrl[0] = target_joints[0]
         sim.data.ctrl[1] = target_joints[1]
-        # # Use the command known to close the gripper fully
-        # target_q1 = self.Q1_RANGE[0]  # 0.0
-        # target_q2 = self.Q2_RANGE[0]  # -0.04
-        # sim.data.ctrl[0] = target_q1
-        # sim.data.ctrl[1] = target_q2
 
     def width_to_joints(self, width: float):
-        SENSOR_THICKNESS = 0.01823
-        adjusted_width = width + 2 * SENSOR_THICKNESS
+        adjusted_width = width + 2 * self.SENSOR_THICKNESS
         clamped_width = np.clip(adjusted_width, self.MIN_WIDTH_CLAMP, self.MAX_WIDTH)
         target_q1 = clamped_width / 2.0
         target_q2 = -0.04 + (clamped_width / 2.0)
@@ -242,25 +233,10 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
         return np.stack([target_q1, target_q2], axis=-1)
 
     def close_gripper_at(self, sim: MjSimulation, pose: SE3Pose):
-        """
-        Sets the gripper base pose and commands the fingers to close fully.
-        Uses the original known control signals for closing.
-        """
-        # Set the base pose using mocap
-        # Use [:] to modify in place if sim.data.mocap_pos is a view
+        """Sets the gripper base pose and commands the fingers to close fully."""
         sim.data.mocap_pos[:] = np.copy(pose.pos)
         sim.data.mocap_quat[:] = np.copy(pose.quat)
-
-        # # Command the fingers to close using the original known control values
-        # close_ctrl_signal = np.array([0.0, -0.04])
-        # sim.data.ctrl[:] = close_ctrl_signal  # Set ctrl for both actuators
-        
-        # Close gripper to negative distance to ensure to return MIN_WIDTH_CLAMP
-        close_ctrl_signal = self.width_to_joints(-1.0)
-        sim.data.ctrl[:] = close_ctrl_signal
-
-        # Step the simulation to allow the controller to close the fingers
-        # Keep existing step count
+        sim.data.ctrl[:] = self.width_to_joints(-1.0)
         mujoco.mj_step(sim.model, sim.data, nstep=1000)
     
     def set_finger_max_force(self, sim: MjSimulation, max_force: float):
@@ -290,11 +266,7 @@ class GripperPandaGelSightMini(MjShakableOpenCloseGripper, MjScannable):
 
     def _clamp_width(self, width: np.array) -> float:
         """Clamps the desired width to the gripper's operational range."""
-        
-        SENSOR_THICKNESS = 0.01823
-        
-        # Add sensor thickness of both sensors to the desired width
-        adjusted_width = width + (2 * SENSOR_THICKNESS)
+        adjusted_width = width + (2 * self.SENSOR_THICKNESS)
 
         # TODO: Check if an additional buffer is required -> open gripper a little bit more than necessary
         # Padding of 0.008 m 
