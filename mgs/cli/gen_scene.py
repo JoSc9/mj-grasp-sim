@@ -418,7 +418,7 @@ def filter_grasps(cfg: DictConfig, scene_def):
     return result, neg_result, failed_result
 
 
-@hydra.main(version_base=None, config_path="config", config_name="gen_scene")
+@hydra.main(version_base=None, config_path="config", config_name="gen_scene_gelsight")
 def main(cfg: DictConfig):    
     output_dir = os.getenv("MGS_OUTPUT_DIR")
     output_dir = os.path.join(output_dir, "02_scene", cfg.gripper.name)

@@ -60,7 +60,7 @@ def _fmt_eta(seconds: float) -> str:
 
 
 @hydra.main(
-    version_base="1.3.2", config_path="config", config_name="gen_gripper_object_grasps"
+    version_base="1.3.2", config_path="config", config_name="gen_gripper_object_grasps_gelsight"
 )
 def main(cfg: DictConfig):
     # --- select object ---

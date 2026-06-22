@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - gripper: panda
+  - gripper: panda_gelsight_mini
 
-max_rounds: 100
+max_rounds: 60
 
 name: Fast_Data_Subset
 # num target grasps to compute (will be checked in beginning)-> if enough exit
@@ -21,7 +21,7 @@ collect_grasps_till_save: 100
 object_id: 0
 
 # force per impulse
-force: 200.0
+force: 150.0
 
 hydra:
   job:

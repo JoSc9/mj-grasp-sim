@@ -189,6 +189,18 @@ Recorded during the lifting phase (gripper moves upward by `lift_dist`).
 
 ---
 
+## Config Files
+
+Each pipeline step has its own config file (inspired by the normal config file but with the new panda gripper):
+- `gen_gripper_object_grasps_gelsight.yaml`
+- `gen_scene_gelsight.yaml`
+- `render_scene_gelsight.yaml`
+
+Select a config at runtime with Hydra's `--config-name` flag (see commands
+below).
+
+---
+
 ## How to Run the Pipeline
 
 ### Prerequisites
@@ -206,11 +218,9 @@ for collision-free and dynamically stable grasps, and saves them to
 `outputs/01_grasp/`.
 
 ```bash
-python -m mgs.cli.gen_gripper_object_grasps
+# Panda + GelSight Mini
+python -m mgs.cli.gen_gripper_object_grasps --config-name=gen_gripper_object_grasps_gelsight
 ```
-
-Config: `mgs/cli/config/gen_gripper_object_grasps.yaml`
-— uses `gripper: panda_gelsight_mini` by default.
 
 ### Step 2 — Generate clutter scenes
 
@@ -219,10 +229,9 @@ from Step 1 into world coordinates, and labels them as stable / collision /
 failed. Saves scenes to `outputs/02_scene/`.
 
 ```bash
-python -m mgs.cli.gen_scene
+# Panda + GelSight Mini
+python -m mgs.cli.gen_scene --config-name=gen_scene_gelsight
 ```
-
-Config: `mgs/cli/config/gen_scene.yaml`
 
 ### Step 3 — Render tactile feedback
 
@@ -255,6 +264,73 @@ Keyboard controls when `visualize: true`:
 | `l` | Skip remaining grasps of the current label type |
 | `s` | Skip current grasp |
 
+
+---
+
+## Force Calibration Tools
+
+These two scripts were used to determine the appropriate `force` parameter for
+the GelSight gripper config (`gen_gripper_object_grasps_gelsight.yaml`). They
+sweep a range of impulse forces across all six cardinal directions and plot the
+resulting holding-force distributions, making it easy to identify a force
+threshold that separates stable from unstable grasps.
+
+### `eval_grasp_max_force.py`
+
+Mirrors the grasp-generation loop of `gen_gripper_object_grasps.py` but
+replaces the binary stability test with a force sweep. For each
+collision-free grasp it calls
+`env.grasp_max_impulse_force_evaluation(start_force=10.0, max_force=300.0, force_step=10.0)`,
+which applies impulses in all six directions (±X, ±Y, ±Z) and records the
+highest force the grasp withstood before dropping the object. Results are
+written to a dedicated debug directory so they do not interfere with the main
+pipeline outputs.
+
+**Output location:**
+```
+$MGS_OUTPUT_DIR/debug_force_eval/<gripper_name>/friction_panda/<object_id>/
+```
+
+**Output file format** (one `.npz` per chunk):
+
+| Key | Shape | Description |
+|---|---|---|
+| `poses` | `(N, 4, 4)` | Grasp poses in object frame |
+| `joints` | `(N, 2)` | Actuator positions |
+| `max_forces` | `(N, 6)` | Max held force per direction: +X +Y +Z −X −Y −Z (N) |
+| `success_rate_during_gen` | scalar | Fraction of evaluated grasps that survived initial closing |
+
+```bash
+# Standard Panda gripper
+python -m mgs.cli.eval_grasp_max_force
+
+# Panda + GelSight Mini
+python -m mgs.cli.eval_grasp_max_force --config-name=gen_gripper_object_grasps_gelsight
+```
+
+### `analyze_max_forces.py`
+
+Reads all `.npz` files produced by `eval_grasp_max_force.py` and generates
+two plots per object:
+
+- **Directional bar chart** — mean ± std of the holding force in each of the
+  six directions, showing any directional bias.
+- **Worst-case histogram** — distribution of the per-grasp minimum holding
+  force (the weakest direction), with the population mean overlaid.
+
+Plots are saved as `.png` files under:
+```
+$MGS_OUTPUT_DIR/debug_force_eval/<gripper_name>/results_eval/
+```
+
+> **Note:** The input path is currently hardcoded to
+> `~/mj_data/out/debug_force_eval/PandaGripperGelsightMini/friction_panda`.
+> Adjust the `input_root` variable at the bottom of the script if your
+> `$MGS_OUTPUT_DIR` differs.
+
+```bash
+python -m mgs.cli.analyze_max_forces
+```
 
 ---
 

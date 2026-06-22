@@ -51,7 +51,7 @@ def _derive_obj_name(fname: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
-@hydra.main(version_base=None, config_path="config", config_name="render_scene_with_tactile_feedback")
+@hydra.main(version_base=None, config_path="config", config_name="render_scene_gelsight")
 def main(cfg: DictConfig):
     # -----------------------------------------------------------------------
     # 0. Feature Flags
